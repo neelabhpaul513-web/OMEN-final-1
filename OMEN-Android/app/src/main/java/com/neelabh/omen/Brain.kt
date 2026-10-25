@@ -52,13 +52,13 @@ object Brain {
     fun txt(m: JSONObject): String = if (m.isNull("content")) "" else m.getString("content")
     fun clean(s: String) = s.replace(Regex("[*#_`]"), "").trim()
 
-    fun chat(key: String, msgs: JSONArray, tools: JSONArray?): JSONObject {
+    fun chat(key: String, msgs: JSONArray, tools: JSONArray?, maxTokens: Int = 500): JSONObject {
         for (i in 0 until 6) {
             if (brain.isEmpty()) load(key)
             val m = brain
             if (m.isEmpty()) throw Exception("No Groq chat model is available for this key")
             try {
-                val b = JSONObject().put("model", m).put("messages", msgs).put("temperature", 0.3).put("max_tokens", 500)
+                val b = JSONObject().put("model", m).put("messages", msgs).put("temperature", 0.3).put("max_tokens", maxTokens)
                 if (tools != null) b.put("tools", tools).put("tool_choice", "auto")
                 return http("POST", "/chat/completions", key, b).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
             } catch (e: Exception) {
@@ -88,17 +88,26 @@ object Brain {
         return clean(txt(chat(key, msgs, null))) + " Live search is not enabled on your Groq account, so that is from memory."
     }
 
-    /** Ask a vision model about a photo (JPEG bytes). */
-    fun vision(key: String, prompt: String, jpeg: ByteArray): String {
+    fun cleanNotes(s: String) = s.replace(Regex("[*`#]"), "").trim()
+
+    /** Ask a vision model about one or more photos (JPEG bytes), e.g. pages of notes. */
+    fun vision(key: String, prompt: String, jpegs: List<ByteArray>, maxTokens: Int = 1800): String {
         if (models.isEmpty()) load(key)
         val vm = models.firstOrNull { it !in bad && Regex("llama-4|scout|maverick|vision", RegexOption.IGNORE_CASE).containsMatchIn(it) }
             ?: throw Exception("No vision model is available on this Groq key")
-        val content = JSONArray()
-            .put(JSONObject().put("type", "text").put("text", prompt + " Answer briefly in plain text."))
-            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(jpeg, Base64.NO_WRAP))))
+        val content = JSONArray().put(JSONObject().put("type", "text").put("text", prompt))
+        for (b in jpegs) content.put(JSONObject().put("type", "image_url").put("image_url",
+            JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(b, Base64.NO_WRAP))))
         val msgs = JSONArray().put(JSONObject().put("role", "user").put("content", content))
-        val b = JSONObject().put("model", vm).put("messages", msgs).put("max_tokens", 700).put("temperature", 0.3)
-        return clean(txt(http("POST", "/chat/completions", key, b).getJSONArray("choices").getJSONObject(0).getJSONObject("message")))
+        val b = JSONObject().put("model", vm).put("messages", msgs).put("max_tokens", maxTokens).put("temperature", 0.2)
+        return cleanNotes(txt(http("POST", "/chat/completions", key, b).getJSONArray("choices").getJSONObject(0).getJSONObject("message")))
+    }
+
+    /** Text-only fallback: analyse notes that were read by offline OCR. */
+    fun notesFromText(key: String, ocr: String, task: String): String {
+        val msgs = JSONArray().put(JSONObject().put("role", "user").put("content",
+            "Here is text read by OCR from photos of the user's notes (it may contain recognition errors):\n<<<\n$ocr\n>>>\n$task"))
+        return cleanNotes(txt(chat(key, msgs, null, 1500)))
     }
 
     /** Free image search (Wikimedia Commons). Returns paths of downloaded thumbnails. */

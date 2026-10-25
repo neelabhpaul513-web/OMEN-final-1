@@ -51,7 +51,8 @@ class MainActivity : Activity() {
     private var webMode = false
     private var pendingText: String? = null
     private var pendingSearch = false
-    private var pendingImage: File? = null
+    private val pendingImages = mutableListOf<File>()
+    private lateinit var previewLabel: TextView
     private var renderedVersion = -1
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
@@ -106,12 +107,25 @@ class MainActivity : Activity() {
         status = tv("DORMANT", 12f, MUT).apply { letterSpacing = 0.3f }
         col.addView(status)
 
-        // photo preview strip (hidden until a photo is attached)
-        previewBox = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE }
+        // photo preview + notes actions (hidden until a photo is attached)
+        previewBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val prow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         previewImg = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; background = pill(0xFF10121F.toInt(), ACC, 12); clipToOutline = true }
-        previewBox.addView(previewImg, LinearLayout.LayoutParams(dp(56), dp(56)))
-        previewBox.addView(tv("Photo attached. Ask something about it.", 12f, MUT).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) })
-        previewBox.addView(circleBtn(R.drawable.ic_close, "Remove photo") { clearPhoto() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        prow.addView(previewImg, LinearLayout.LayoutParams(dp(56), dp(56)))
+        previewLabel = tv("", 12f, MUT).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
+        prow.addView(previewLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) })
+        prow.addView(circleBtn(R.drawable.ic_close, "Remove photos") { clearPhoto() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        previewBox.addView(prow)
+        val acts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun act(label: String, mode: String) = TextView(this).apply {
+            text = label; textSize = 13f; setTextColor(ACC); setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = pill(0xCC10121F.toInt(), ACC, 18); isClickable = true
+            setOnClickListener { sendPhotos(mode, input.text.toString().trim()) }
+        }
+        for ((l, md) in listOf("Read text" to "read", "Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz"))
+            acts.addView(act(l, md), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
+        previewBox.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(acts) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         col.addView(previewBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
         // row A: text box + send
@@ -195,7 +209,7 @@ class MainActivity : Activity() {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
         var s = 1
-        while (o.outWidth / s > 1600 || o.outHeight / s > 1600) s *= 2
+        while (o.outWidth / s > 1800 || o.outHeight / s > 1800) s *= 2
         var bmp = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) }
             ?: throw Exception("cannot decode")
         val orient = try { contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1) } ?: 1 } catch (e: Exception) { 1 }
@@ -203,31 +217,68 @@ class MainActivity : Activity() {
         if (deg != 0f) bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(deg) }, true)
         val dir = File(filesDir, "chat_images"); dir.mkdirs()
         val f = File(dir, "p${System.currentTimeMillis()}.jpg")
-        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 82, it) }
         return f
     }
 
     private fun pickPhoto() {
+        if (pendingImages.size >= 5) { toast("Up to 5 photos at a time"); return }
         try {
-            startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), 78)
+            startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 78)
         } catch (e: Exception) { toast("No gallery app found") }
     }
 
-    private fun clearPhoto() { pendingImage = null; previewBox.visibility = View.GONE }
+    private fun updatePreview() {
+        if (pendingImages.isEmpty()) { previewBox.visibility = View.GONE; return }
+        previewBox.visibility = View.VISIBLE
+        previewImg.setImageBitmap(decode(pendingImages.last().path, dp(112)))
+        previewLabel.text = (if (pendingImages.size == 1) "1 photo attached" else "${pendingImages.size} pages attached") + ". Tap an action or ask your own question."
+    }
 
-    private fun sendPhoto(img: File, typed: String) {
+    private fun clearPhoto() { pendingImages.clear(); updatePreview() }
+
+    private fun notesPrompt(mode: String, typed: String): String {
+        val base = "These are photos of the user's notes (handwritten or printed). Read them carefully and in order. Use plain text only: no markdown, no asterisks; use simple dashes and numbers. "
+        return base + when (mode) {
+            "read" -> "Transcribe all the text exactly as written, keeping headings, bullet points, numbering, formulas and table layout. Write [illegible] for words you cannot read. Output only the transcription."
+            "summary" -> "Write a clear summary: first a one-line topic, then the main points as short dashed lines. Fix obvious spelling slips."
+            "key" -> "List the key terms with short definitions, and the important facts and formulas. Then give 3 likely exam questions."
+            "quiz" -> "Create 6 quiz questions from these notes (mix of short answer and multiple choice), each followed by a brief answer."
+            "custom" -> "Do this: $typed"
+            else -> "First transcribe the notes accurately, then add a section titled SUMMARY with the key points."
+        }
+    }
+
+    private fun sendPhotos(mode: String, typed: String) {
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) { toast("Add your Groq key in SETUP first"); return }
-        val prompt = if (typed.isEmpty()) "What is in this image? Describe it briefly." else typed
+        val files = pendingImages.toList()
+        if (files.isEmpty()) return
+        val prompt = notesPrompt(mode, typed)
+        val label = when (mode) { "read" -> "Read text"; "summary" -> "Summarize"; "key" -> "Key points"; "quiz" -> "Quiz me"; "custom" -> typed; else -> "Read and summarize" }
         clearPhoto(); input.setText("")
-        ChatLog.add(this, true, "\u0001IMG:${img.path}\u0001$typed"); render()
+        val head = if (files.size == 1) "IMG:${files[0].path}" else "GAL:" + files.joinToString("|") { it.path }
+        ChatLog.add(this, true, "\u0001$head\u0001$label"); render()
         view.state = "thinking"; status.text = "THINKING"
         Thread {
-            val ans = try { Brain.vision(key, prompt, img.readBytes()) } catch (e: Exception) { "Photo analysis failed: ${e.message}" }
+            val ans = try { Brain.vision(key, prompt, files.map { it.readBytes() }) } catch (e: Exception) {
+                try { ocrFallback(key, files, mode, prompt) } catch (e2: Exception) { "Photo analysis failed: ${e.message}" }
+            }
             ChatLog.add(this, false, ans)
             runOnUiThread { view.state = "idle"; status.text = stateLabel(); render() }
-            if (OmenService.running && prefs.getBoolean("voice", true)) { try { startService(Intent(this, OmenService::class.java).putExtra("say", ans)) } catch (e: Exception) {} }
+            if (OmenService.running && prefs.getBoolean("voice", true) && ans.length <= 500) {
+                try { startService(Intent(this, OmenService::class.java).putExtra("say", ans)) } catch (e: Exception) {}
+            }
         }.start()
+    }
+
+    /** No vision model on the Groq key: read the text on this phone, then let the chat model analyse it. */
+    private fun ocrFallback(key: String, files: List<File>, mode: String, prompt: String): String {
+        val text = files.mapIndexed { i, f -> (if (files.size > 1) "--- page ${i + 1} ---\n" else "") + Ocr.read(f.path) }.joinToString("\n\n").trim()
+        if (text.isBlank()) return "I could not find any readable text in the photo."
+        if (mode == "read") return text + "\n\n(read with offline OCR on this phone; handwriting may be inaccurate)"
+        return Brain.notesFromText(key, text, prompt) + "\n\n(based on offline OCR text)"
     }
 
     // ---------- chat ----------
@@ -281,8 +332,7 @@ class MainActivity : Activity() {
 
     private fun submit() {
         val t = input.text.toString().trim()
-        val img = pendingImage
-        if (img != null) { sendPhoto(img, t); return }
+        if (pendingImages.isNotEmpty()) { sendPhotos(if (t.isEmpty()) "default" else "custom", t); return }
         if (t.isEmpty()) return
         input.setText("")
         ChatLog.add(this, true, t); render()
@@ -313,13 +363,17 @@ class MainActivity : Activity() {
     override fun onActivityResult(rc: Int, res: Int, d: Intent?) {
         super.onActivityResult(rc, res, d)
         if (rc == 78) {
-            val uri = d?.data
-            if (res == RESULT_OK && uri != null) {
+            val uris = mutableListOf<Uri>()
+            d?.clipData?.let { cd -> for (n in 0 until cd.itemCount) uris.add(cd.getItemAt(n).uri) }
+            if (uris.isEmpty()) d?.data?.let { uris.add(it) }
+            if (res == RESULT_OK && uris.isNotEmpty()) {
                 Thread {
-                    try {
-                        val f = savePhoto(uri)
-                        runOnUiThread { pendingImage = f; previewImg.setImageBitmap(decode(f.path, dp(112))); previewBox.visibility = View.VISIBLE; input.requestFocus() }
-                    } catch (e: Exception) { runOnUiThread { toast("Could not read that image") } }
+                    var failed = 0
+                    for (u in uris.take(maxOf(0, 5 - pendingImages.size))) {
+                        try { val f = savePhoto(u); runOnUiThread { pendingImages.add(f); updatePreview(); input.requestFocus() } }
+                        catch (e: Exception) { failed++ }
+                    }
+                    if (failed > 0) runOnUiThread { toast("Could not read $failed image(s)") }
                 }.start()
             }
             return

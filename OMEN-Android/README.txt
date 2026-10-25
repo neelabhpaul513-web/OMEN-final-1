@@ -43,3 +43,6 @@ V7: fixed the AWAKEN button body being see-through.
 
 V8: new gothic logo + wordmark; PHOTO button (ask the AI about a picture, uses a Groq vision model); IMAGE SEARCH ('show pictures of X', Wikimedia Commons);
  tougher mic loop (error handling, watchdog, more wake-word spellings incl. 'aman', smart wake); 'call X and put it on speaker'; fuzzy contact matching.
+
+V9: NOTES SCANNER. Attach up to 5 photos (pages of handwritten/printed notes) with the photo button, then tap Read text / Summarize / Key points / Quiz me, or ask your own question.
+ Uses a Groq vision model; if your key has none, it falls back to offline OCR (ML Kit) on the phone and analyses that text.
