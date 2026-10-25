@@ -38,3 +38,5 @@ V4: new logo; ALARMS/TIMERS now go into your phone's Clock app (needs SETUP step
 V5: the mic button now SEARCHES THE WEB for anything that is not a phone command (open/alarm/call/message). Questions spoken to 'Omen' also search.
 
 V6: new animated AWAKEN button (glow, morphs to red 'SEND ME BACK' with a green online dot); greeting no longer repeats in chat; softer orb glow.
+
+V7: fixed the AWAKEN button body being see-through.

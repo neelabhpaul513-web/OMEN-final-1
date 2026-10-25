@@ -60,6 +60,7 @@ class AwakenView(c: Context) : View(c) {
         p.style = Paint.Style.FILL
         val c1 = ColorUtils.blendARGB(0xFFB9C6FF.toInt(), 0xFF1E1226.toInt(), mix)
         val c2 = ColorUtils.blendARGB(0xFF6C7BD8.toInt(), 0xFF0E1020.toInt(), mix)
+        p.color = 0xFFFFFFFF.toInt()  // full alpha: paint alpha would otherwise fade the gradient
         p.shader = LinearGradient(rect.left, 0f, rect.right, 0f, c1, c2, Shader.TileMode.CLAMP)
         cv.drawRoundRect(rect, rad, rad, p); p.shader = null
         p.style = Paint.Style.STROKE; p.strokeWidth = 2f * d
