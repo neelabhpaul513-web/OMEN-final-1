@@ -62,10 +62,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         Thread {
             try {
                 val cmd = c.trim().replace(Regex("^(omen|oman)[, ]+", RegexOption.IGNORE_CASE), "")
-                if (search) {
-                    val key = prefs.getString("key", "") ?: ""
-                    if (key.isBlank()) say("Give me your Groq key in the settings.") else say(Brain.research(key, cmd))
-                } else execute(cmd.lowercase())
+                if (search) searchWeb(cmd) else execute(cmd.lowercase(), spoken)
             } catch (e: Exception) { say("Something broke. ${e.message}") }
         }.start()
     }
@@ -96,20 +93,20 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             override fun onError(id: String?) { speaking = false; main.post { listen() } }
         })
         ttsReady = true
-        if (pending.isEmpty()) say("Omen online. Speak.")
+        if (pending.isEmpty()) say("Omen online. Speak.", false)
         pending.toList().forEach { typed(it.first, it.second) }
         pending.clear()
     }
 
-    private fun say(t: String) {
-        ui("speaking", reply = t)
+    private fun say(t: String, log: Boolean = true) {
+        ui("speaking", reply = t, log = log)
         if (typedMode && !prefs.getBoolean("voice", true)) { main.postDelayed({ ui("idle") }, 400); return }
         tts.speak(t, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
 
-    private fun ui(state: String, user: String? = null, reply: String? = null, heard: String? = null) {
+    private fun ui(state: String, user: String? = null, reply: String? = null, heard: String? = null, log: Boolean = true) {
         user?.let { ChatLog.add(this, true, it.removePrefix("› ")) }
-        if (reply != null && state == "speaking") ChatLog.add(this, false, reply)
+        if (reply != null && state == "speaking" && log) ChatLog.add(this, false, reply)
         sendBroadcast(Intent("com.neelabh.omen.UI").setPackage(packageName).putExtra("state", state).putExtra("user", user).putExtra("reply", reply).putExtra("heard", heard))
     }
 
@@ -193,7 +190,19 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         Thread { try { execute(cmd) } catch (e: Exception) { say("Something broke. ${e.message}") }; engagedUntil = System.currentTimeMillis() + 20000 }.start()
     }
 
-    private fun execute(c: String) {
+    private fun searchWeb(q: String) {
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) return say("Give me your Groq key in the settings.")
+        ChatLog.add(this, false, "Searching the web…"); ui("thinking")
+        say(Brain.research(key, q))
+    }
+
+    private fun looksLikeQuestion(t: String): Boolean {
+        if (Regex("joke|hello|how are you|your name|thank|good (morning|night|evening)").containsMatchIn(t)) return false
+        return t.endsWith("?") || Regex("^(who|what|when|where|why|how|which|is|are|was|were|do|does|did|can|will|should|tell|give|explain|latest|news|weather|price|score|define|meaning)\\b").containsMatchIn(t)
+    }
+
+    private fun execute(c: String, searchFallback: Boolean = false) {
         var t = c
         numWords.forEach { (k, v) -> t = t.replace(Regex("\\b$k\\b"), v) }
         var m: MatchResult?
@@ -222,12 +231,10 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         }
         m = Regex("^(?:search for|search|look up|google|research|find out about|find out|tell me about)\\s+(.+)").find(t)
         if (m != null) {
-            val key = prefs.getString("key", "") ?: ""
-            if (key.isBlank()) return say("Give me your Groq key in the settings.")
-            ui("thinking"); return say(Brain.research(key, m.groupValues[1]))
+            return searchWeb(m.groupValues[1])
         }
         if (Regex("goodbye|shut down|stop listening").containsMatchIn(t)) { say("Back to the shadows."); main.postDelayed({ stopSelf() }, 2500); return }
-        ai(c)
+        if (searchFallback || looksLikeQuestion(t)) searchWeb(c) else ai(c)
     }
 
     private fun ai(q: String) {

@@ -37,7 +37,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var chat: LinearLayout
     private lateinit var scroll: ScrollView
-    private lateinit var btn: Button
+    private lateinit var btn: AwakenView
     private lateinit var input: EditText
     private lateinit var webBtn: ImageButton
     private lateinit var voiceBtn: ImageButton
@@ -125,12 +125,8 @@ class MainActivity : Activity() {
         for (v in listOf(mic, webBtn, voiceBtn, send)) row.addView(v, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(6) })
         col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
 
-        btn = Button(this).apply {
-            textSize = 15f; letterSpacing = 0.2f; setTextColor(TXT); compoundDrawablePadding = dp(10)
-            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF20254A.toInt(), 0xFF0E1020.toInt())).apply { cornerRadius = dp(28).toFloat(); setStroke(dp(2), ACC) }
-            setOnClickListener { toggle() }
-        }
-        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply { topMargin = dp(10) })
+        btn = AwakenView(this).apply { onToggle = { toggle() } }
+        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)).apply { topMargin = dp(4) })
 
         val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         links.addView(chip("HISTORY", R.drawable.ic_history) { showHistory() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -172,8 +168,7 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
-        btn.text = if (OmenService.running) "SEND ME BACK" else "AWAKEN OMEN"
-        btn.setCompoundDrawablesWithIntrinsicBounds(icon(R.drawable.ic_power, if (OmenService.running) 0xFFFF8A9A.toInt() else ACC), null, null, null)
+        btn.awake = OmenService.running
         if (view.state == "idle") status.text = stateLabel()
     }
 

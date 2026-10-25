@@ -34,3 +34,7 @@ V3 VOICE: tap the mic button (next to the chat box) to speak one command WITHOUT
 
 V4: new logo; ALARMS/TIMERS now go into your phone's Clock app (needs SETUP step 1 "display over apps", or keep OMEN open on screen);
  smoother animation; round icon buttons; HISTORY button keeps every question you asked (CLEAR only clears the chat, not history).
+
+V5: the mic button now SEARCHES THE WEB for anything that is not a phone command (open/alarm/call/message). Questions spoken to 'Omen' also search.
+
+V6: new animated AWAKEN button (glow, morphs to red 'SEND ME BACK' with a green online dot); greeting no longer repeats in chat; softer orb glow.

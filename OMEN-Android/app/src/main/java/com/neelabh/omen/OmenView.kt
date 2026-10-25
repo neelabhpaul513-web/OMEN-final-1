@@ -56,9 +56,9 @@ class OmenView(c: Context) : View(c) {
         val pulse = 1f + 0.06f * sin(t * 3f) * (if (state == "idle") 0.4f else 1.4f)
         val r = w * 0.16f * pulse
         val acc = when (state) { "listening" -> 0xFFA8B8FF.toInt(); "thinking" -> 0xFFC79CFF.toInt(); "speaking" -> 0xFFFFFFFF.toInt(); else -> 0xFF5C6B8A.toInt() }
-        for (k in 3 downTo 1) {
-            p.color = Color.argb(20, Color.red(acc), Color.green(acc), Color.blue(acc))
-            cv.drawCircle(cx, cy, r * (1f + k * 0.35f), p)
+        for (k in 8 downTo 1) {
+            p.color = Color.argb(8, Color.red(acc), Color.green(acc), Color.blue(acc))
+            cv.drawCircle(cx, cy, r * (1f + k * 0.17f), p)
         }
         p.color = 0xFF04040A.toInt(); cv.drawCircle(cx, cy, r, p)
         p.style = Paint.Style.STROKE; p.strokeWidth = 4f; p.color = acc; p.alpha = 170; cv.drawCircle(cx, cy, r, p)
