@@ -227,9 +227,9 @@ class MainActivity : Activity() {
             Triple("Call log (caller names)", ok(Manifest.permission.READ_CALL_LOG), ask),
             Triple("SMS", ok(Manifest.permission.SEND_SMS), ask),
             Triple("Notifications", Build.VERSION.SDK_INT < 33 || ok(Manifest.permission.POST_NOTIFICATIONS), ask),
-            Triple("Display over apps (Clock alarms, open apps)", Settings.canDrawOverlays(this)) { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) },
-            Triple("WhatsApp auto-send (Accessibility)", OmenAccess.alive) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-            Triple("Battery: unrestricted background use", pm.isIgnoringBatteryOptimizations(packageName)) { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            Triple("Display over apps (Clock alarms, open apps)", Settings.canDrawOverlays(this), { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }),
+            Triple("WhatsApp auto-send (Accessibility)", OmenAccess.alive, { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }),
+            Triple("Battery: unrestricted background use", pm.isIgnoringBatteryOptimizations(packageName), { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) })
         )
         val lv = ListView(this)
         lv.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, items.map { (if (it.second) "✔  " else "✖  ") + it.first + (if (it.second) "" else "  (tap to allow)") })

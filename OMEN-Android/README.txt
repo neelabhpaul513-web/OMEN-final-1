@@ -51,3 +51,5 @@ V9.1: versionCode now = GitHub run number so every build counts as a newer updat
 
 V10: references (source links) under web answers + Google link; read any website link you paste; image GENERATION ('create an image of ...', free Pollinations service) with Save to gallery;
  instant time/date/battery answers; permission checklist (SETUP > Check all permissions); title no longer overlaps the orb.
+
+V10.1: fixed build error (missing DateFormat import) and text escapes.

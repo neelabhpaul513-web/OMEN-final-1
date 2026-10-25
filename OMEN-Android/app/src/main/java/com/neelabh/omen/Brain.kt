@@ -205,7 +205,7 @@ object Brain {
             }
         } catch (e: Exception) {}
         val msgs = JSONArray().put(base.getJSONObject(0)).put(JSONObject().put("role", "user").put("content",
-            "Question: $q\\n\\nSources:\\n$ctx\\nAnswer briefly using these sources if relevant, otherwise from your own knowledge."))
+            "Question: $q\n\nSources:\n$ctx\nAnswer briefly using these sources if relevant, otherwise from your own knowledge."))
         val a = clean(txt(chat(key, msgs, null, 500))) + " Live web search is not enabled on your Groq account, so this used Wikipedia and my own knowledge."
         return Research(a, refs + googleRef(q))
     }
@@ -226,7 +226,7 @@ object Brain {
             .replace(Regex("\\s+"), " ").trim().take(14000)
         if (t.length < 80) throw Exception("The page had no readable text")
         val msgs = JSONArray().put(JSONObject().put("role", "user").put("content",
-            "Text of the web page $url:\\n<<<\\n$t\\n>>>\\nTask: $task\\nAnswer in plain text under 150 words, using only this page."))
+            "Text of the web page $url:\n<<<\n$t\n>>>\nTask: $task\nAnswer in plain text under 150 words, using only this page."))
         return Research(clean(txt(chat(key, msgs, null, 700))), listOf(url to url))
     }
 
