@@ -7,12 +7,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Find the Android project folder
+        id: p
+        run: |
+          S=$(find . -name settings.gradle.kts -not -path '*/node_modules/*' | head -1)
+          if [ -z "$S" ]; then
+            echo "::error::settings.gradle.kts not found. Upload the files INSIDE the OMEN-Android folder (not the zip) to the repository."
+            find . -maxdepth 2 -not -path './.git/*' | head -50
+            exit 1
+          fi
+          echo "dir=$(dirname "$S")" >> "$GITHUB_OUTPUT"
+          echo "Project folder: $(dirname "$S")"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v3
         with: { gradle-version: 8.7 }
-      - run: gradle assembleDebug
-      - run: cp app/build/outputs/apk/debug/app-debug.apk OMEN.apk
+      - name: Build debug APK
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Collect APK
+        run: cp "$(find . -name app-debug.apk | head -1)" OMEN.apk
       - uses: actions/upload-artifact@v4
         with: { name: OMEN-apk, path: OMEN.apk }
       - uses: softprops/action-gh-release@v2

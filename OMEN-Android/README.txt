@@ -26,3 +26,5 @@ VS CODE / npm USERS
  Create local.properties containing:  sdk.dir=C:\\Users\\YOU\\AppData\\Local\\Android\\Sdk   (Mac/Linux: path to your Android SDK)
  Then:  npm run setup   (once)   |   npm run build   -> app/build/outputs/apk/debug/app-debug.apk   |   npm run install:phone (USB debugging on)
  No computer setup wanted? Use the GitHub Actions build instead (see above).
+
+V2: chat box, web-search toggle (magnifier), voice on/off (speaker), clear chat. App is signed with a fixed key so later updates install over it. FIRST time: uninstall the old OMEN, then install this one.

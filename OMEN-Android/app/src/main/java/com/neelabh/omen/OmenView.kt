@@ -42,9 +42,9 @@ class OmenView(c: Context) : View(c) {
             p.color = Color.argb(70, 190, 205, 235); cv.drawCircle(x, y, d[3] * 0.6f, p)
         }
         // the hooded orb with glowing eyes
-        val cx = w / 2; val cy = h * 0.38f
+        val cx = w / 2; val cy = h * 0.25f
         val pulse = 1f + 0.07f * sin(t * 3f) * (if (state == "idle") 0.4f else 1.4f)
-        val r = w * 0.2f * pulse
+        val r = w * 0.16f * pulse
         val acc = when (state) { "listening" -> 0xFFA8B8FF.toInt(); "thinking" -> 0xFFC79CFF.toInt(); "speaking" -> 0xFFFFFFFF.toInt(); else -> 0xFF5C6B8A.toInt() }
         p.shader = RadialGradient(cx, cy, r * 2.6f, intArrayOf(Color.argb(110, Color.red(acc), Color.green(acc), Color.blue(acc)), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
         cv.drawCircle(cx, cy, r * 2.6f, p); p.shader = null

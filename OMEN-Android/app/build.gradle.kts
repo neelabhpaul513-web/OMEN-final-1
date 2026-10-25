@@ -12,6 +12,14 @@ android {
         versionCode = 1
         versionName = "1.0"
     }
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("omen-debug.keystore")
+            storePassword = "omen123"
+            keyAlias = "omen"
+            keyPassword = "omen123"
+        }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }

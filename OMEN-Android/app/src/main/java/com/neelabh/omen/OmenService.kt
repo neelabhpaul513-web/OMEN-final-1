@@ -32,6 +32,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private var ringing = false
     private var callerNumber: String? = null
     private var engagedUntil = 0L
+    private var ttsReady = false
+    private var typedMode = false
+    private val pending = mutableListOf<Pair<String, Boolean>>()
     private val history = mutableListOf<Pair<String, String>>()
     private val wake = Regex("\\b(omen|oman|owen|ohmen|o men)\\b")
     private val numWords = mapOf("one" to "1", "two" to "2", "three" to "3", "four" to "4", "five" to "5", "six" to "6",
@@ -39,7 +42,27 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
     override fun onBind(i: Intent?): IBinder? = null
-    override fun onStartCommand(i: Intent?, f: Int, s: Int) = START_STICKY
+    override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
+        i?.getStringExtra("cmd")?.let { c ->
+            val search = i.getBooleanExtra("search", false)
+            if (ttsReady) typed(c, search) else pending.add(c to search)
+        }
+        return START_STICKY
+    }
+
+    private fun typed(c: String, search: Boolean) {
+        typedMode = true
+        ui("thinking")
+        Thread {
+            try {
+                val cmd = c.trim().replace(Regex("^(omen|oman)[, ]+", RegexOption.IGNORE_CASE), "")
+                if (search) {
+                    val key = prefs.getString("key", "") ?: ""
+                    if (key.isBlank()) say("Give me your Groq key in the settings.") else say(Brain.research(key, cmd))
+                } else execute(cmd.lowercase())
+            } catch (e: Exception) { say("Something broke. ${e.message}") }
+        }.start()
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -66,15 +89,21 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) { speaking = false; main.post { listen() } }
         })
-        say("Omen online. Speak.")
+        ttsReady = true
+        if (pending.isEmpty()) say("Omen online. Speak.")
+        pending.toList().forEach { typed(it.first, it.second) }
+        pending.clear()
     }
 
     private fun say(t: String) {
         ui("speaking", reply = t)
+        if (typedMode && !prefs.getBoolean("voice", true)) { main.postDelayed({ ui("idle") }, 400); return }
         tts.speak(t, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
 
     private fun ui(state: String, user: String? = null, reply: String? = null) {
+        user?.let { ChatLog.add(this, true, it.removePrefix("› ")) }
+        if (reply != null && state == "speaking") ChatLog.add(this, false, reply)
         sendBroadcast(Intent("com.neelabh.omen.UI").setPackage(packageName).putExtra("state", state).putExtra("user", user).putExtra("reply", reply))
     }
 
@@ -132,6 +161,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     // ---------- commands ----------
     @Suppress("DEPRECATION")
     private fun handle(raw: String) {
+        typedMode = false
         val t = raw.lowercase().trim()
         if (ringing) {
             if (Regex("answer|pick up|accept").containsMatchIn(t)) { try { getSystemService(TelecomManager::class.java).acceptRingingCall() } catch (e: Exception) { say("I could not answer.") }; return }
