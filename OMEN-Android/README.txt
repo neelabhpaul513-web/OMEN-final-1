@@ -28,3 +28,6 @@ VS CODE / npm USERS
  No computer setup wanted? Use the GitHub Actions build instead (see above).
 
 V2: chat box, web-search toggle (magnifier), voice on/off (speaker), clear chat. App is signed with a fixed key so later updates install over it. FIRST time: uninstall the old OMEN, then install this one.
+
+V3 VOICE: tap the mic button (next to the chat box) to speak one command WITHOUT saying "Omen". The status line shows "HEARD: ..." so you can see what OMEN understood.
+"Search for X", "look up X", "google X" always run a web search. SETUP has a switch to turn the wake word OFF (it then answers everything it hears).

@@ -33,25 +33,31 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private var callerNumber: String? = null
     private var engagedUntil = 0L
     private var ttsReady = false
+    private var paused = false
     private var typedMode = false
     private val pending = mutableListOf<Pair<String, Boolean>>()
     private val history = mutableListOf<Pair<String, String>>()
-    private val wake = Regex("\\b(omen|oman|owen|ohmen|o men)\\b")
+    private val wake = Regex("\\b(omen|oman|owen|ohmen|o men|oh men|amen|omin|omn|ommen|aumen|ooman)\\b")
     private val numWords = mapOf("one" to "1", "two" to "2", "three" to "3", "four" to "4", "five" to "5", "six" to "6",
         "seven" to "7", "eight" to "8", "nine" to "9", "ten" to "10", "fifteen" to "15", "twenty" to "20", "thirty" to "30")
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
     override fun onBind(i: Intent?): IBinder? = null
     override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
+        if (i?.getBooleanExtra("pause", false) == true) {
+            paused = true; main.post { rec?.destroy(); rec = null }
+            main.postDelayed({ if (paused) { paused = false; listen() } }, 25000)
+        }
+        if (i?.getBooleanExtra("resume", false) == true) { paused = false; listen() }
         i?.getStringExtra("cmd")?.let { c ->
             val search = i.getBooleanExtra("search", false)
-            if (ttsReady) typed(c, search) else pending.add(c to search)
+            if (ttsReady) typed(c, search, i.getBooleanExtra("spoken", false)) else pending.add(c to search)
         }
         return START_STICKY
     }
 
-    private fun typed(c: String, search: Boolean) {
-        typedMode = true
+    private fun typed(c: String, search: Boolean, spoken: Boolean = false) {
+        typedMode = !spoken
         ui("thinking")
         Thread {
             try {
@@ -101,20 +107,22 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         tts.speak(t, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
 
-    private fun ui(state: String, user: String? = null, reply: String? = null) {
+    private fun ui(state: String, user: String? = null, reply: String? = null, heard: String? = null) {
         user?.let { ChatLog.add(this, true, it.removePrefix("› ")) }
         if (reply != null && state == "speaking") ChatLog.add(this, false, reply)
-        sendBroadcast(Intent("com.neelabh.omen.UI").setPackage(packageName).putExtra("state", state).putExtra("user", user).putExtra("reply", reply))
+        sendBroadcast(Intent("com.neelabh.omen.UI").setPackage(packageName).putExtra("state", state).putExtra("user", user).putExtra("reply", reply).putExtra("heard", heard))
     }
 
     private fun listen() {
-        if (!alive || speaking) return
+        if (!alive || speaking || paused) return
         main.post {
             rec?.destroy()
             rec = SpeechRecognizer.createSpeechRecognizer(this).also { r ->
                 r.setRecognitionListener(object : RecognitionListener {
                     override fun onResults(b: Bundle?) {
-                        b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { handle(it) }
+                        val list = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        val best = list?.firstOrNull { wake.containsMatchIn(it.lowercase()) } ?: list?.firstOrNull()
+                        best?.let { handle(it) }
                         main.postDelayed({ listen() }, 250)
                     }
                     override fun onError(e: Int) { main.postDelayed({ listen() }, if (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1500 else 400) }
@@ -128,7 +136,10 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
                 })
                 r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN"))
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+                    .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L))
             }
         }
     }
@@ -176,10 +187,10 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         if (m != null) {
             cmd = t.substring(m.range.last + 1).trim(' ', ',', '.', '!')
             if (cmd.isEmpty()) { awaiting = true; say("I am listening."); return }
-        } else if (!awaiting && !engaged) return
+        } else if (!awaiting && !engaged && prefs.getBoolean("wake", true)) { ui("listening", heard = raw); return }
         awaiting = false
         ui("thinking", user = "› $raw")
-        Thread { try { execute(cmd) } catch (e: Exception) { say("Something broke. ${e.message}") }; engagedUntil = System.currentTimeMillis() + 15000 }.start()
+        Thread { try { execute(cmd) } catch (e: Exception) { say("Something broke. ${e.message}") }; engagedUntil = System.currentTimeMillis() + 20000 }.start()
     }
 
     private fun execute(c: String) {
@@ -208,6 +219,12 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         if (m != null) {
             val sms = Regex("^(text|sms)\\b").containsMatchIn(t)
             return say(if (sms) act.sms(m.groupValues[1], m.groupValues[2]) else act.whatsapp(m.groupValues[1], m.groupValues[2]))
+        }
+        m = Regex("^(?:search for|search|look up|google|research|find out about|find out|tell me about)\\s+(.+)").find(t)
+        if (m != null) {
+            val key = prefs.getString("key", "") ?: ""
+            if (key.isBlank()) return say("Give me your Groq key in the settings.")
+            ui("thinking"); return say(Brain.research(key, m.groupValues[1]))
         }
         if (Regex("goodbye|shut down|stop listening").containsMatchIn(t)) { say("Back to the shadows."); main.postDelayed({ stopSelf() }, 2500); return }
         ai(c)
