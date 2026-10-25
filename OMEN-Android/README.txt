@@ -31,3 +31,6 @@ V2: chat box, web-search toggle (magnifier), voice on/off (speaker), clear chat.
 
 V3 VOICE: tap the mic button (next to the chat box) to speak one command WITHOUT saying "Omen". The status line shows "HEARD: ..." so you can see what OMEN understood.
 "Search for X", "look up X", "google X" always run a web search. SETUP has a switch to turn the wake word OFF (it then answers everything it hears).
+
+V4: new logo; ALARMS/TIMERS now go into your phone's Clock app (needs SETUP step 1 "display over apps", or keep OMEN open on screen);
+ smoother animation; round icon buttons; HISTORY button keeps every question you asked (CLEAR only clears the chat, not history).

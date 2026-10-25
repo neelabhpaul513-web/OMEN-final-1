@@ -5,7 +5,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.*
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.content.res.ColorStateList
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -20,6 +21,13 @@ import android.widget.*
 import androidx.core.content.ContextCompat
 
 class MainActivity : Activity() {
+    companion object { @Volatile var visible = false }
+
+    private val ACC = 0xFFA8B8FF.toInt()
+    private val MUT = 0xFF8D9BB8.toInt()
+    private val TXT = 0xFFE6ECFF.toInt()
+    private val INK = 0xFF06060C.toInt()
+
     private val perms = mutableListOf(
         Manifest.permission.RECORD_AUDIO, Manifest.permission.CALL_PHONE, Manifest.permission.ANSWER_PHONE_CALLS,
         Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.SEND_SMS
@@ -31,11 +39,13 @@ class MainActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var btn: Button
     private lateinit var input: EditText
-    private lateinit var webBtn: Button
-    private lateinit var voiceBtn: Button
+    private lateinit var webBtn: ImageButton
+    private lateinit var voiceBtn: ImageButton
     private var webMode = false
     private var pendingText: String? = null
     private var pendingSearch = false
+    private var renderedVersion = -1
+    private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
     private val uiRx = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -52,60 +62,80 @@ class MainActivity : Activity() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private fun pill(fill: Int, r: Int = 32) = GradientDrawable().apply { cornerRadius = dp(r).toFloat(); setColor(fill); setStroke(dp(2), 0xFF8D9BB8.toInt()) }
+    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+    private fun icon(res: Int, tint: Int): Drawable? = ContextCompat.getDrawable(this, res)?.mutate()?.also { it.setTint(tint) }
     private fun tv(t: String, size: Float, color: Int) = TextView(this).apply { text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER }
-    private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
+
+    private fun circle(fill: Int, stroke: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(fill); setStroke(dp(1), stroke) }
+    private fun pill(fill: Int, stroke: Int, r: Int) = GradientDrawable().apply { cornerRadius = dp(r).toFloat(); setColor(fill); setStroke(dp(1), stroke) }
+
+    private fun circleBtn(res: Int, desc: String, f: () -> Unit) = ImageButton(this).apply {
+        setImageResource(res); imageTintList = ColorStateList.valueOf(TXT); contentDescription = desc
+        background = circle(0xCC10121F.toInt(), 0xFF3A4156.toInt()); scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(dp(11), dp(11), dp(11), dp(11)); setOnClickListener { f() }
+    }
+
+    private fun chip(label: String, res: Int, f: () -> Unit) = TextView(this).apply {
+        text = label; textSize = 12f; letterSpacing = 0.1f; setTextColor(MUT); gravity = Gravity.CENTER
+        compoundDrawablePadding = dp(6); setCompoundDrawablesWithIntrinsicBounds(icon(res, MUT), null, null, null)
+        setPadding(0, dp(12), 0, dp(12)); isClickable = true; setOnClickListener { f() }
+    }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        window.statusBarColor = 0xFF06060C.toInt(); window.navigationBarColor = 0xFF08080F.toInt()
+        window.statusBarColor = 0xFF05050B.toInt(); window.navigationBarColor = 0xFF07070E.toInt()
         val root = FrameLayout(this)
         view = OmenView(this); root.addView(view)
         val title = tv("O M E N", 28f, 0xFFC9D4F0.toInt()).apply { letterSpacing = 0.3f }
         root.addView(title, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(44) })
 
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(10)) }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(6)) }
         col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 47f))
         scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
         chat = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
         scroll.addView(chat)
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 53f))
 
-        status = tv("DORMANT", 12f, 0xFF8D9BB8.toInt()).apply { letterSpacing = 0.3f }
+        status = tv("DORMANT", 12f, MUT).apply { letterSpacing = 0.3f }
         col.addView(status)
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         input = EditText(this).apply {
-            hint = "Type or ask OMEN…"; setHintTextColor(0xFF6F7A94.toInt()); setTextColor(0xFFE6ECFF.toInt())
-            background = pill(0xCC10121F.toInt(), 26); setPadding(dp(18), dp(8), dp(18), dp(8)); isSingleLine = true
+            hint = "Type or ask OMEN…"; setHintTextColor(0xFF6F7A94.toInt()); setTextColor(TXT)
+            background = pill(0xCC10121F.toInt(), 0xFF3A4156.toInt(), 24); setPadding(dp(18), dp(8), dp(18), dp(8)); isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEND
             setOnEditorActionListener { _, _, _ -> submit(); true }
         }
-        row.addView(input, LinearLayout.LayoutParams(0, dp(52), 1f))
-        fun small(t: String, f: () -> Unit) = Button(this).apply {
-            text = t; textSize = 18f; setTextColor(0xFFE6ECFF.toInt()); background = null
-            minWidth = 0; minimumWidth = 0; setPadding(dp(6), 0, dp(6), 0); setOnClickListener { f() }
+        row.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val mic = circleBtn(R.drawable.ic_mic, "Speak") { startVoice() }
+        webBtn = circleBtn(R.drawable.ic_search, "Web search mode") {
+            webMode = !webMode
+            webBtn.background = if (webMode) circle(0xFF3A4570.toInt(), ACC) else circle(0xCC10121F.toInt(), 0xFF3A4156.toInt())
+            webBtn.imageTintList = ColorStateList.valueOf(if (webMode) ACC else TXT)
+            toast(if (webMode) "Web search mode ON" else "Chat mode")
         }
-        webBtn = small("🔍") { webMode = !webMode; webBtn.background = if (webMode) pill(0x663A4570, 20) else null
-            Toast.makeText(this, if (webMode) "Web search mode ON" else "Chat mode", Toast.LENGTH_SHORT).show() }
-        voiceBtn = small(if (prefs.getBoolean("voice", true)) "🔊" else "🔇") {
-            val v = !prefs.getBoolean("voice", true); prefs.edit().putBoolean("voice", v).apply(); voiceBtn.text = if (v) "🔊" else "🔇"
-            Toast.makeText(this, if (v) "Typed replies will be spoken" else "Typed replies are silent", Toast.LENGTH_SHORT).show() }
-        val mic = small("🎤") { startVoice() }
-        val send = small("➤") { submit() }
-        row.addView(mic, LinearLayout.LayoutParams(dp(44), dp(52)))
-        row.addView(webBtn, LinearLayout.LayoutParams(dp(46), dp(52)))
-        row.addView(voiceBtn, LinearLayout.LayoutParams(dp(46), dp(52)))
-        row.addView(send, LinearLayout.LayoutParams(dp(46), dp(52)))
-        col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        voiceBtn = circleBtn(if (prefs.getBoolean("voice", true)) R.drawable.ic_vol_on else R.drawable.ic_vol_off, "Spoken replies") {
+            val v = !prefs.getBoolean("voice", true); prefs.edit().putBoolean("voice", v).apply()
+            voiceBtn.setImageResource(if (v) R.drawable.ic_vol_on else R.drawable.ic_vol_off)
+            toast(if (v) "Typed replies will be spoken" else "Typed replies are silent")
+        }
+        val send = circleBtn(R.drawable.ic_send, "Send") { submit() }.apply {
+            background = circle(ACC, ACC); imageTintList = ColorStateList.valueOf(INK)
+        }
+        for (v in listOf(mic, webBtn, voiceBtn, send)) row.addView(v, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(6) })
+        col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
 
-        btn = Button(this).apply { setTextColor(Color.WHITE); background = pill(0xCC10121F.toInt()); setOnClickListener { toggle() } }
-        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(8) })
+        btn = Button(this).apply {
+            textSize = 15f; letterSpacing = 0.2f; setTextColor(TXT); compoundDrawablePadding = dp(10)
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF20254A.toInt(), 0xFF0E1020.toInt())).apply { cornerRadius = dp(28).toFloat(); setStroke(dp(2), ACC) }
+            setOnClickListener { toggle() }
+        }
+        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply { topMargin = dp(10) })
 
         val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun link(t: String, f: () -> Unit) = Button(this).apply { text = t; setTextColor(0xFF8D9BB8.toInt()); background = null; setOnClickListener { f() } }
-        links.addView(link("SETUP") { setup() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        links.addView(link("CLEAR CHAT") { ChatLog.clear(this); render() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        links.addView(chip("HISTORY", R.drawable.ic_history) { showHistory() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        links.addView(chip("SETUP", R.drawable.ic_gear) { setup() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        links.addView(chip("CLEAR", R.drawable.ic_delete) { ChatLog.clear(this); render() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(links)
 
         root.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -114,32 +144,36 @@ class MainActivity : Activity() {
         if (prefs.getString("key", "").isNullOrBlank()) setup()
     }
 
-    override fun onStart() { super.onStart(); ContextCompat.registerReceiver(this, uiRx, IntentFilter("com.neelabh.omen.UI"), ContextCompat.RECEIVER_NOT_EXPORTED); render(); refresh() }
-    override fun onStop() { super.onStop(); try { unregisterReceiver(uiRx) } catch (e: Exception) {} }
+    override fun onStart() {
+        super.onStart(); visible = true
+        ContextCompat.registerReceiver(this, uiRx, IntentFilter("com.neelabh.omen.UI"), ContextCompat.RECEIVER_NOT_EXPORTED)
+        render(); refresh()
+    }
+    override fun onStop() { super.onStop(); visible = false; try { unregisterReceiver(uiRx) } catch (e: Exception) {} }
     override fun onResume() { super.onResume(); AlarmReceiver.rt?.stop(); refresh() }
 
     private fun bubble(t: String, user: Boolean) = TextView(this).apply {
-        text = t; textSize = 15f; setTextColor(0xFFE6ECFF.toInt()); setTextIsSelectable(true)
+        text = t; textSize = 15f; setTextColor(TXT); setTextIsSelectable(true)
         setPadding(dp(14), dp(10), dp(14), dp(10))
         maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()
-        background = GradientDrawable().apply {
-            cornerRadius = dp(18).toFloat(); setColor(if (user) 0xFF222845.toInt() else 0xCC10121F.toInt())
-            setStroke(dp(1), if (user) 0xFFA8B8FF.toInt() else 0xFF3A4156.toInt())
-        }
+        background = pill(if (user) 0xFF222845.toInt() else 0xCC10121F.toInt(), if (user) ACC else 0xFF3A4156.toInt(), 18)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
     }
 
     private fun render() {
+        if (renderedVersion == ChatLog.version) return
+        renderedVersion = ChatLog.version
         chat.removeAllViews()
         val items = ChatLog.all(this)
-        if (items.isEmpty()) chat.addView(bubble("Ask me anything. Tap 🔍 to search the web, or say \"Omen\" after you awaken me.", false))
+        if (items.isEmpty()) chat.addView(bubble("Ask me anything. Use the search button for the web, the mic to speak, or say \"Omen\" after you awaken me.", false))
         items.forEach { chat.addView(bubble(it.second, it.first)) }
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun refresh() {
         btn.text = if (OmenService.running) "SEND ME BACK" else "AWAKEN OMEN"
+        btn.setCompoundDrawablesWithIntrinsicBounds(icon(R.drawable.ic_power, if (OmenService.running) 0xFFFF8A9A.toInt() else ACC), null, null, null)
         if (view.state == "idle") status.text = stateLabel()
     }
 
@@ -195,8 +229,19 @@ class MainActivity : Activity() {
 
     private fun start() {
         ContextCompat.startForegroundService(this, Intent(this, OmenService::class.java))
-        if (!Settings.canDrawOverlays(this)) Toast.makeText(this, "Open SETUP and allow 'display over apps' so I can open apps by voice.", Toast.LENGTH_LONG).show()
+        if (!Settings.canDrawOverlays(this)) Toast.makeText(this, "Open SETUP and allow 'display over apps' so I can use your Clock and open apps by voice.", Toast.LENGTH_LONG).show()
         refresh()
+    }
+
+    private fun showHistory() {
+        val h = QueryHistory.all(this)
+        if (h.isEmpty()) { toast("No history yet"); return }
+        val lv = ListView(this)
+        lv.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, h)
+        val dlg = AlertDialog.Builder(this).setTitle("History").setView(lv)
+            .setNegativeButton("Close", null).setNeutralButton("Clear history") { _, _ -> QueryHistory.clear(this); toast("History cleared") }.create()
+        lv.setOnItemClickListener { _, _, pos, _ -> input.setText(h[pos]); input.setSelection(input.text.length); dlg.dismiss() }
+        dlg.show()
     }
 
     private fun setup() {
@@ -217,7 +262,7 @@ class MainActivity : Activity() {
             text = lbl()
             setOnClickListener { prefs.edit().putBoolean("wake", !prefs.getBoolean("wake", true)).apply(); text = lbl() }
         })
-        b("1. Allow display over apps (open apps by voice)") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+        b("1. Allow display over apps (Clock alarms + open apps by voice)") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
         b("2. Enable WhatsApp auto-send (optional)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         b("3. Allow background use (battery)") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
         AlertDialog.Builder(this).setTitle("OMEN setup").setView(lay).setPositiveButton("Close", null).show()

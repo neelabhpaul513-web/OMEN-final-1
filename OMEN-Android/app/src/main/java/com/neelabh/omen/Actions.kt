@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.AlarmClock
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.telecom.TelecomManager
 import android.telephony.SmsManager
 import java.text.DateFormat
@@ -45,18 +47,32 @@ class Actions(private val c: Context) {
         c.getSystemService(AlarmManager::class.java).setAlarmClock(AlarmManager.AlarmClockInfo(at, show), pi)
     }
 
+    private fun canLaunch() = MainActivity.visible || Settings.canDrawOverlays(c)
+
     fun alarm(h: Int, m: Int): String {
         if (h !in 0..23 || m !in 0..59) return "That time makes no sense."
         val cal = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, m); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
         if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(Calendar.DAY_OF_YEAR, 1)
+        val label = DateFormat.getTimeInstance(DateFormat.SHORT).format(cal.time)
+        if (canLaunch()) {
+            val i = Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR, h).putExtra(AlarmClock.EXTRA_MINUTES, m)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, "OMEN").putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            if (i.resolveActivity(c.packageManager) != null && go(i)) return "Alarm set in your Clock app for $label."
+        }
         schedule(cal.timeInMillis, "Your alarm.")
-        return "Alarm set for " + DateFormat.getTimeInstance(DateFormat.SHORT).format(cal.time) + "."
+        return "Alarm set for $label. Allow display over apps in setup, and I will use your Clock app."
     }
 
     fun timer(sec: Int): String {
         if (sec <= 0) return "For how long?"
+        val say = if (sec >= 60) "${sec / 60} minutes" else "$sec seconds"
+        if (canLaunch()) {
+            val i = Intent(AlarmClock.ACTION_SET_TIMER).putExtra(AlarmClock.EXTRA_LENGTH, sec)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, "OMEN").putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            if (i.resolveActivity(c.packageManager) != null && go(i)) return "Timer set in your Clock app for $say."
+        }
         schedule(System.currentTimeMillis() + sec * 1000L, "Your timer is complete.")
-        return "Timer set for " + (if (sec >= 60) "${sec / 60} minutes" else "$sec seconds") + "."
+        return "Timer set for $say."
     }
 
     private fun resolveRaw(who: String): String? {
