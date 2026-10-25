@@ -46,3 +46,5 @@ V8: new gothic logo + wordmark; PHOTO button (ask the AI about a picture, uses a
 
 V9: NOTES SCANNER. Attach up to 5 photos (pages of handwritten/printed notes) with the photo button, then tap Read text / Summarize / Key points / Quiz me, or ask your own question.
  Uses a Groq vision model; if your key has none, it falls back to offline OCR (ML Kit) on the phone and analyses that text.
+
+V9.1: versionCode now = GitHub run number so every build counts as a newer update; APK trimmed to arm64 + armv7 (smaller).
