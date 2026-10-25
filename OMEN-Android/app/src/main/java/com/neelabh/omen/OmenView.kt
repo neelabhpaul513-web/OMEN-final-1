@@ -52,9 +52,9 @@ class OmenView(c: Context) : View(c) {
         }
 
         // hooded orb with glowing eyes
-        val cx = w / 2; val cy = h * 0.25f
+        val cx = w / 2; val cy = h * 0.27f
         val pulse = 1f + 0.06f * sin(t * 3f) * (if (state == "idle") 0.4f else 1.4f)
-        val r = w * 0.16f * pulse
+        val r = w * 0.15f * pulse
         val acc = when (state) { "listening" -> 0xFFA8B8FF.toInt(); "thinking" -> 0xFFC79CFF.toInt(); "speaking" -> 0xFFFFFFFF.toInt(); else -> 0xFF5C6B8A.toInt() }
         for (k in 8 downTo 1) {
             p.color = Color.argb(8, Color.red(acc), Color.green(acc), Color.blue(acc))

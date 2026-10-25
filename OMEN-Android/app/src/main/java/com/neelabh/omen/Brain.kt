@@ -140,6 +140,109 @@ object Brain {
         return out
     }
 
+    data class Research(val text: String, val refs: List<Pair<String, String>>)
+
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
+    private fun googleRef(q: String) = "Search this on Google" to "https://www.google.com/search?q=" + enc(q)
+
+    private fun getText(url: String, ua: String = "OMEN/1.0 (personal Android assistant)"): String {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.setRequestProperty("User-Agent", ua); c.connectTimeout = 15000; c.readTimeout = 20000
+        return c.inputStream.bufferedReader().readText()
+    }
+
+    private fun refsFrom(msg: JSONObject): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        val ex = msg.optJSONArray("executed_tools") ?: return out
+        for (i in 0 until ex.length()) {
+            val res = ex.optJSONObject(i)?.optJSONObject("search_results")?.optJSONArray("results") ?: continue
+            for (k in 0 until res.length()) {
+                val o = res.optJSONObject(k) ?: continue
+                val u = o.optString("url")
+                if (u.startsWith("http") && out.none { it.second == u }) out.add(o.optString("title").ifBlank { u } to u)
+            }
+        }
+        return out.take(5)
+    }
+
+    /** Web research with source links. Groq search models first; Wikipedia + chat model as a fallback. */
+    fun researchRefs(key: String, q: String): Research {
+        if (models.isEmpty()) load(key)
+        val now = java.text.DateFormat.getDateTimeInstance().format(java.util.Date())
+        val msgs = JSONArray()
+            .put(JSONObject().put("role", "system").put("content", "You are OMEN, a calm shadowy research assistant. Right now it is $now. Search the web, then answer in plain spoken text under 120 words. No markdown, lists or links."))
+            .put(JSONObject().put("role", "user").put("content", q))
+        val tries = mutableListOf<Pair<String, Boolean>>()
+        listOf("groq/compound", "groq/compound-mini").filter { it in models }.forEach { tries.add(it to false) }
+        listOf("openai/gpt-oss-120b", "openai/gpt-oss-20b").filter { it in models }.forEach { tries.add(it to true) }
+        for ((m, bs) in tries) {
+            try {
+                val b = JSONObject().put("model", m).put("messages", msgs).put("temperature", 0.4).put("max_tokens", if (bs) 2000 else 900)
+                if (bs) b.put("tools", JSONArray().put(JSONObject().put("type", "browser_search")))
+                val msg = http("POST", "/chat/completions", key, b).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
+                val r = txt(msg)
+                if (r.isNotBlank()) return Research(clean(r), refsFrom(msg) + googleRef(q))
+            } catch (e: Exception) {}
+        }
+        return wikiFallback(key, q, msgs)
+    }
+
+    private fun wikiFallback(key: String, q: String, base: JSONArray): Research {
+        val ctx = StringBuilder(); val refs = mutableListOf<Pair<String, String>>()
+        try {
+            val arr = JSONObject(getText("https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=3&srsearch=" + enc(q))).getJSONObject("query").getJSONArray("search")
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i); val title = o.getString("title")
+                ctx.append("[${i + 1}] $title: ${o.getString("snippet").replace(Regex("<[^>]+>"), "")}\n")
+                refs.add(title to "https://en.wikipedia.org/wiki/" + enc(title.replace(' ', '_')))
+            }
+            if (arr.length() > 0) {
+                val top = arr.getJSONObject(0).getString("title")
+                val pg = JSONObject(getText("https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&exchars=900&format=json&titles=" + enc(top)))
+                    .getJSONObject("query").getJSONObject("pages")
+                val first = pg.getJSONObject(pg.keys().next()).optString("extract")
+                if (first.isNotBlank()) ctx.append("\nIntro of $top: $first\n")
+            }
+        } catch (e: Exception) {}
+        val msgs = JSONArray().put(base.getJSONObject(0)).put(JSONObject().put("role", "user").put("content",
+            "Question: $q\\n\\nSources:\\n$ctx\\nAnswer briefly using these sources if relevant, otherwise from your own knowledge."))
+        val a = clean(txt(chat(key, msgs, null, 500))) + " Live web search is not enabled on your Groq account, so this used Wikipedia and my own knowledge."
+        return Research(a, refs + googleRef(q))
+    }
+
+    /** Download a web page and answer a question about it. */
+    fun askAboutPage(key: String, url: String, task: String): Research {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.instanceFollowRedirects = true; c.connectTimeout = 15000; c.readTimeout = 20000
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) OMEN/1.0")
+        val type = c.contentType ?: ""
+        if (type.isNotEmpty() && !type.startsWith("text/")) throw Exception("That link is not a web page I can read ($type)")
+        val buf = ByteArray(700_000); var n = 0
+        c.inputStream.use { ins -> while (n < buf.size) { val r = ins.read(buf, n, buf.size - n); if (r < 0) break; n += r } }
+        var t = String(buf, 0, n, Charsets.UTF_8)
+        val opt = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        t = t.replace(Regex("<script.*?</script>", opt), " ").replace(Regex("<style.*?</style>", opt), " ").replace(Regex("<!--.*?-->", opt), " ")
+            .replace(Regex("<[^>]+>"), " ").replace("&nbsp;", " ").replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+            .replace(Regex("\\s+"), " ").trim().take(14000)
+        if (t.length < 80) throw Exception("The page had no readable text")
+        val msgs = JSONArray().put(JSONObject().put("role", "user").put("content",
+            "Text of the web page $url:\\n<<<\\n$t\\n>>>\\nTask: $task\\nAnswer in plain text under 150 words, using only this page."))
+        return Research(clean(txt(chat(key, msgs, null, 700))), listOf(url to url))
+    }
+
+    /** Free AI image generation (Pollinations). Returns the saved file path. */
+    fun generateImage(c: Context, prompt: String): String {
+        val url = "https://image.pollinations.ai/prompt/" + enc(prompt).replace("+", "%20") + "?width=1024&height=1024&nologo=true&seed=" + (System.currentTimeMillis() % 100000)
+        val con = URL(url).openConnection() as HttpURLConnection
+        con.setRequestProperty("User-Agent", "OMEN/1.0"); con.connectTimeout = 20000; con.readTimeout = 120000
+        if (con.responseCode !in 200..299 || !(con.contentType ?: "").startsWith("image")) throw Exception("The image service is busy. Try again in a moment")
+        val dir = File(c.filesDir, "img"); dir.mkdirs()
+        val f = File(dir, "gen${System.currentTimeMillis()}.jpg")
+        con.inputStream.use { ins -> f.outputStream().use { ins.copyTo(it) } }
+        if (f.length() < 5000) { f.delete(); throw Exception("The image service returned nothing") }
+        return f.path
+    }
+
     private fun tool(n: String, d: String, vararg p: Triple<String, String, String>): JSONObject {
         val props = JSONObject()
         p.forEach { props.put(it.first, JSONObject().put("type", it.second).put("description", it.third)) }
@@ -156,5 +259,7 @@ object Brain {
         .put(tool("call", "Phone call a contact name or number.", Triple("to", "string", "contact or number")))
         .put(tool("remember", "Remember a lasting fact or preference about the user.", Triple("fact", "string", "the fact")))
         .put(tool("image_search", "Show pictures or photos of something.", Triple("query", "string", "what to show pictures of")))
+        .put(tool("generate_image", "Create or draw a new AI image from a description.", Triple("prompt", "string", "detailed description of the image")))
+        .put(tool("read_website", "Open a web page link and answer a question about it.", Triple("url", "string", "the full http(s) link"), Triple("question", "string", "what to find out, or 'summarize'")))
         .put(tool("research", "Search the web for any factual, current or news question.", Triple("query", "string", "the question")))
 }

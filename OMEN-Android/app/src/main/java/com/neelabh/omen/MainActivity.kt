@@ -15,6 +15,10 @@ import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.MediaStore
+import android.text.method.LinkMovementMethod
+import android.text.util.Linkify
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.view.Gravity
@@ -95,14 +99,14 @@ class MainActivity : Activity() {
         val root = FrameLayout(this)
         view = OmenView(this); root.addView(view)
         val title = ImageView(this).apply { setImageResource(R.drawable.omen_wordmark); setColorFilter(0xFFC9D4F0.toInt()); adjustViewBounds = true }
-        root.addView(title, FrameLayout.LayoutParams(dp(190), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(34) })
+        root.addView(title, FrameLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(30) })
 
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(4)) }
-        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 44f))
+        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 47f))
         scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
         chat = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
         scroll.addView(chat)
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 56f))
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 53f))
 
         status = tv("DORMANT", 12f, MUT).apply { letterSpacing = 0.3f }
         col.addView(status)
@@ -196,7 +200,43 @@ class MainActivity : Activity() {
 
     private fun showFull(path: String) {
         val iv = ImageView(this).apply { setImageBitmap(decode(path, 1400)); adjustViewBounds = true; setPadding(dp(4), dp(4), dp(4), dp(4)) }
-        AlertDialog.Builder(this).setView(iv).setPositiveButton("Close", null).show()
+        AlertDialog.Builder(this).setView(iv).setPositiveButton("Close", null).setNeutralButton("Save to gallery") { _, _ -> saveToGallery(path) }.show()
+    }
+
+    private fun saveToGallery(path: String) {
+        if (Build.VERSION.SDK_INT < 29) { toast("Saving needs Android 10 or newer"); return }
+        try {
+            val v = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "OMEN_${System.currentTimeMillis()}.jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg"); put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/OMEN")
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v) ?: throw Exception("insert")
+            contentResolver.openOutputStream(uri)?.use { out -> File(path).inputStream().use { it.copyTo(out) } }
+            toast("Saved to Pictures/OMEN")
+        } catch (e: Exception) { toast("Could not save the image") }
+    }
+
+    private fun showAccess() {
+        fun ok(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+        val pm = getSystemService(PowerManager::class.java)
+        val ask = { requestPermissions(perms, 1) }
+        val items = listOf<Triple<String, Boolean, () -> Unit>>(
+            Triple("Microphone", ok(Manifest.permission.RECORD_AUDIO), ask),
+            Triple("Phone: place and answer calls", ok(Manifest.permission.CALL_PHONE) && ok(Manifest.permission.ANSWER_PHONE_CALLS) && ok(Manifest.permission.READ_PHONE_STATE), ask),
+            Triple("Contacts", ok(Manifest.permission.READ_CONTACTS), ask),
+            Triple("Call log (caller names)", ok(Manifest.permission.READ_CALL_LOG), ask),
+            Triple("SMS", ok(Manifest.permission.SEND_SMS), ask),
+            Triple("Notifications", Build.VERSION.SDK_INT < 33 || ok(Manifest.permission.POST_NOTIFICATIONS), ask),
+            Triple("Display over apps (Clock alarms, open apps)", Settings.canDrawOverlays(this)) { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) },
+            Triple("WhatsApp auto-send (Accessibility)", OmenAccess.alive) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+            Triple("Battery: unrestricted background use", pm.isIgnoringBatteryOptimizations(packageName)) { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        )
+        val lv = ListView(this)
+        lv.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, items.map { (if (it.second) "✔  " else "✖  ") + it.first + (if (it.second) "" else "  (tap to allow)") })
+        val dlg = AlertDialog.Builder(this).setTitle("OMEN access").setView(lv)
+            .setPositiveButton("Allow all permissions") { _, _ -> requestPermissions(perms, 1) }.setNegativeButton("Close", null).create()
+        lv.setOnItemClickListener { _, _, pos, _ -> if (!items[pos].second) { items[pos].third(); dlg.dismiss() } }
+        dlg.show()
     }
 
     private fun thumb(path: String, sizeDp: Int) = ImageView(this).apply {
@@ -283,7 +323,9 @@ class MainActivity : Activity() {
 
     // ---------- chat ----------
     private fun bubble(t: String, user: Boolean) = TextView(this).apply {
-        text = t; textSize = 15f; setTextColor(TXT); setTextIsSelectable(true)
+        text = t; textSize = 15f; setTextColor(TXT)
+        Linkify.addLinks(this, Linkify.WEB_URLS); movementMethod = LinkMovementMethod.getInstance(); setLinkTextColor(ACC)
+        setOnLongClickListener { (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OMEN", t)); toast("Copied"); true }
         setPadding(dp(14), dp(10), dp(14), dp(10))
         maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()
         background = pill(if (user) 0xFF222845.toInt() else 0xCC10121F.toInt(), if (user) ACC else 0xFF3A4156.toInt(), 18)
@@ -437,6 +479,7 @@ class MainActivity : Activity() {
             text = lbl()
             setOnClickListener { prefs.edit().putBoolean("smart", !prefs.getBoolean("smart", true)).apply(); text = lbl() }
         })
+        b("Check all permissions and access") { showAccess() }
         b("1. Allow display over apps (Clock alarms + open apps by voice)") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
         b("2. Enable WhatsApp auto-send (optional)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         b("3. Allow background use (battery)") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }

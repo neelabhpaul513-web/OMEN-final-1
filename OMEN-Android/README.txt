@@ -48,3 +48,6 @@ V9: NOTES SCANNER. Attach up to 5 photos (pages of handwritten/printed notes) wi
  Uses a Groq vision model; if your key has none, it falls back to offline OCR (ML Kit) on the phone and analyses that text.
 
 V9.1: versionCode now = GitHub run number so every build counts as a newer update; APK trimmed to arm64 + armv7 (smaller).
+
+V10: references (source links) under web answers + Google link; read any website link you paste; image GENERATION ('create an image of ...', free Pollinations service) with Save to gallery;
+ instant time/date/battery answers; permission checklist (SETUP > Check all permissions); title no longer overlaps the orb.

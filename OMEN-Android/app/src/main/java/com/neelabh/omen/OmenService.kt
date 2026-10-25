@@ -5,6 +5,7 @@ import android.content.*
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.*
+import android.os.BatteryManager
 import android.provider.ContactsContract
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -67,7 +68,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         Thread {
             try {
                 val cmd = c.trim().replace(Regex("^(omen|oman)[, ]+", RegexOption.IGNORE_CASE), "")
-                if (search) searchWeb(cmd) else execute(cmd.lowercase(), spoken)
+                if (search) searchWeb(cmd) else execute(cmd, spoken)
             } catch (e: Exception) { say("Something broke. ${e.message}") }
         }.start()
     }
@@ -229,7 +230,27 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) return say("Give me your Groq key in the settings.")
         ChatLog.add(this, false, "Searching the web…"); ui("thinking")
-        say(Brain.research(key, q))
+        showResearch(Brain.researchRefs(key, q))
+    }
+
+    private fun showResearch(r: Brain.Research) {
+        val refs = if (r.refs.isEmpty()) "" else "\n\nReferences:\n" + r.refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
+        ChatLog.add(this, false, r.text + refs)
+        say(r.text, false)
+    }
+
+    private fun readLink(url: String, task: String) {
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) return say("Give me your Groq key in the settings.")
+        ChatLog.add(this, false, "Reading the page…"); ui("thinking")
+        showResearch(Brain.askAboutPage(key, url, task))
+    }
+
+    private fun generateImage(prompt: String) {
+        ChatLog.add(this, false, "Creating your image… this can take up to a minute."); ui("thinking")
+        val path = Brain.generateImage(this, prompt)
+        ChatLog.add(this, false, "\u0001IMG:$path\u0001$prompt")
+        say("Your image is ready.", false)
     }
 
     private fun imageSearch(q: String) {
@@ -246,9 +267,18 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun execute(c: String, searchFallback: Boolean = false) {
-        var t = c
+        var t = c.lowercase()
         numWords.forEach { (k, v) -> t = t.replace(Regex("\\b$k\\b"), v) }
         var m: MatchResult?
+        // instant local answers
+        if (Regex("\\b(what('s| is)? the time|what time is it|time now|current time|tell me the time)\\b").containsMatchIn(t))
+            return say("It is " + DateFormat.getTimeInstance(DateFormat.SHORT).format(Date()) + ".")
+        if (Regex("\\b(today'?s date|what('s| is)? (the )?date|what day is it|which day is it|what('s| is)? the day)\\b").containsMatchIn(t))
+            return say("Today is " + java.text.SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date()) + ".")
+        if (Regex("\\bbattery\\b").containsMatchIn(t) && Regex("level|percent|charge|how much|status|left").containsMatchIn(t))
+            return say("Battery is at " + getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) + " percent.")
+        val urlM = Regex("https?://\\S+").find(c)
+        if (urlM != null) return readLink(urlM.value.trimEnd('.', ',', ')'), c.replace(urlM.value, "").trim().ifEmpty { "Summarize this page." })
         m = Regex("^(?:please\\s+)?(?:open|launch|start)\\s+(.+)").find(t)
         if (m != null) return say(act.openApp(m.groupValues[1]))
         m = Regex("timer.*?(\\d+(?:\\.\\d+)?)\\s*(sec|min|hour|hr)").find(t) ?: Regex("(\\d+(?:\\.\\d+)?)\\s*(sec|min|hour|hr)\\w*\\s+timer").find(t)
@@ -277,6 +307,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             val sms = Regex("^(text|sms)\\b").containsMatchIn(t)
             return say(if (sms) act.sms(m.groupValues[1], m.groupValues[2]) else act.whatsapp(m.groupValues[1], m.groupValues[2]))
         }
+        m = Regex("^(?:generate|create|make|draw|paint|render|design)(?:\\s+me)?(?:\\s+an?)?\\s+(?:image|picture|photo|logo|poster|wallpaper|illustration|artwork|drawing|painting)\\s*(?:of|for|showing|with|about)?\\s*(.+)").find(t)
+            ?: Regex("^(?:imagine|draw|paint)\\s+(.+)").find(t)
+        if (m != null) return generateImage(m.groupValues[1])
         m = Regex("^(?:show|find|get|search|give|display)(?:\\s+me)?(?:\\s+(?:some|a few))?\\s+(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
             ?: Regex("^(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
         if (m != null) return imageSearch(m.groupValues[1])
@@ -334,7 +367,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             prefs.edit().putStringSet("facts", s.toList().takeLast(40).toSet()).apply(); "I will remember."
         }
         "image_search" -> { imageSearch(a.optString("query")); "" }
-        "research" -> { ui("thinking"); Brain.research(key, a.optString("query")) }
+        "research" -> { searchWeb(a.optString("query")); "" }
+        "generate_image" -> { generateImage(a.optString("prompt")); "" }
+        "read_website" -> { readLink(a.optString("url"), a.optString("question").ifBlank { "Summarize this page." }); "" }
         else -> "I do not know that one."
     }
 
