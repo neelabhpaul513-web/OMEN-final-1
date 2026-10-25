@@ -6,8 +6,12 @@ import android.app.AlertDialog
 import android.content.*
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,6 +23,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.core.content.ContextCompat
+import java.io.File
 
 class MainActivity : Activity() {
     companion object { @Volatile var visible = false }
@@ -41,9 +46,12 @@ class MainActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var webBtn: ImageButton
     private lateinit var voiceBtn: ImageButton
+    private lateinit var previewBox: LinearLayout
+    private lateinit var previewImg: ImageView
     private var webMode = false
     private var pendingText: String? = null
     private var pendingSearch = false
+    private var pendingImage: File? = null
     private var renderedVersion = -1
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
@@ -65,7 +73,6 @@ class MainActivity : Activity() {
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
     private fun icon(res: Int, tint: Int): Drawable? = ContextCompat.getDrawable(this, res)?.mutate()?.also { it.setTint(tint) }
     private fun tv(t: String, size: Float, color: Int) = TextView(this).apply { text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER }
-
     private fun circle(fill: Int, stroke: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(fill); setStroke(dp(1), stroke) }
     private fun pill(fill: Int, stroke: Int, r: Int) = GradientDrawable().apply { cornerRadius = dp(r).toFloat(); setColor(fill); setStroke(dp(1), stroke) }
 
@@ -78,7 +85,7 @@ class MainActivity : Activity() {
     private fun chip(label: String, res: Int, f: () -> Unit) = TextView(this).apply {
         text = label; textSize = 12f; letterSpacing = 0.1f; setTextColor(MUT); gravity = Gravity.CENTER
         compoundDrawablePadding = dp(6); setCompoundDrawablesWithIntrinsicBounds(icon(res, MUT), null, null, null)
-        setPadding(0, dp(12), 0, dp(12)); isClickable = true; setOnClickListener { f() }
+        setPadding(0, dp(10), 0, dp(10)); isClickable = true; setOnClickListener { f() }
     }
 
     override fun onCreate(b: Bundle?) {
@@ -86,27 +93,42 @@ class MainActivity : Activity() {
         window.statusBarColor = 0xFF05050B.toInt(); window.navigationBarColor = 0xFF07070E.toInt()
         val root = FrameLayout(this)
         view = OmenView(this); root.addView(view)
-        val title = tv("O M E N", 28f, 0xFFC9D4F0.toInt()).apply { letterSpacing = 0.3f }
-        root.addView(title, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(44) })
+        val title = ImageView(this).apply { setImageResource(R.drawable.omen_wordmark); setColorFilter(0xFFC9D4F0.toInt()); adjustViewBounds = true }
+        root.addView(title, FrameLayout.LayoutParams(dp(190), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(34) })
 
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(6)) }
-        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 47f))
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(4)) }
+        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 44f))
         scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
         chat = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
         scroll.addView(chat)
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 53f))
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 56f))
 
         status = tv("DORMANT", 12f, MUT).apply { letterSpacing = 0.3f }
         col.addView(status)
 
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        // photo preview strip (hidden until a photo is attached)
+        previewBox = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE }
+        previewImg = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; background = pill(0xFF10121F.toInt(), ACC, 12); clipToOutline = true }
+        previewBox.addView(previewImg, LinearLayout.LayoutParams(dp(56), dp(56)))
+        previewBox.addView(tv("Photo attached. Ask something about it.", 12f, MUT).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) })
+        previewBox.addView(circleBtn(R.drawable.ic_close, "Remove photo") { clearPhoto() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        col.addView(previewBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+
+        // row A: text box + send
+        val rowA = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         input = EditText(this).apply {
             hint = "Type or ask OMEN…"; setHintTextColor(0xFF6F7A94.toInt()); setTextColor(TXT)
             background = pill(0xCC10121F.toInt(), 0xFF3A4156.toInt(), 24); setPadding(dp(18), dp(8), dp(18), dp(8)); isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEND
             setOnEditorActionListener { _, _, _ -> submit(); true }
         }
-        row.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+        rowA.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val send = circleBtn(R.drawable.ic_send, "Send") { submit() }.apply { background = circle(ACC, ACC); imageTintList = ColorStateList.valueOf(INK) }
+        rowA.addView(send, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
+        col.addView(rowA, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+
+        // row B: tools
+        val photo = circleBtn(R.drawable.ic_photo, "Add photo") { pickPhoto() }
         val mic = circleBtn(R.drawable.ic_mic, "Speak") { startVoice() }
         webBtn = circleBtn(R.drawable.ic_search, "Web search mode") {
             webMode = !webMode
@@ -119,14 +141,15 @@ class MainActivity : Activity() {
             voiceBtn.setImageResource(if (v) R.drawable.ic_vol_on else R.drawable.ic_vol_off)
             toast(if (v) "Typed replies will be spoken" else "Typed replies are silent")
         }
-        val send = circleBtn(R.drawable.ic_send, "Send") { submit() }.apply {
-            background = circle(ACC, ACC); imageTintList = ColorStateList.valueOf(INK)
+        val rowB = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        for (v in listOf(photo, mic, webBtn, voiceBtn)) {
+            val cell = FrameLayout(this); cell.addView(v, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER))
+            rowB.addView(cell, LinearLayout.LayoutParams(0, dp(46), 1f))
         }
-        for (v in listOf(mic, webBtn, voiceBtn, send)) row.addView(v, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(6) })
-        col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        col.addView(rowB, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
         btn = AwakenView(this).apply { onToggle = { toggle() } }
-        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)).apply { topMargin = dp(4) })
+        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)).apply { topMargin = dp(2) })
 
         val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         links.addView(chip("HISTORY", R.drawable.ic_history) { showHistory() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -148,6 +171,66 @@ class MainActivity : Activity() {
     override fun onStop() { super.onStop(); visible = false; try { unregisterReceiver(uiRx) } catch (e: Exception) {} }
     override fun onResume() { super.onResume(); AlarmReceiver.rt?.stop(); refresh() }
 
+    // ---------- images ----------
+    private fun decode(path: String, max: Int): Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, o)
+        var s = 1
+        while (o.outWidth / (s * 2) >= max && o.outHeight / (s * 2) >= max) s *= 2
+        return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = s })
+    }
+
+    private fun showFull(path: String) {
+        val iv = ImageView(this).apply { setImageBitmap(decode(path, 1400)); adjustViewBounds = true; setPadding(dp(4), dp(4), dp(4), dp(4)) }
+        AlertDialog.Builder(this).setView(iv).setPositiveButton("Close", null).show()
+    }
+
+    private fun thumb(path: String, sizeDp: Int) = ImageView(this).apply {
+        setImageBitmap(decode(path, dp(sizeDp) * 2)); scaleType = ImageView.ScaleType.CENTER_CROP
+        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)).apply { marginEnd = dp(6) }
+        setOnClickListener { showFull(path) }
+    }
+
+    private fun savePhoto(uri: Uri): File {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+        var s = 1
+        while (o.outWidth / s > 1600 || o.outHeight / s > 1600) s *= 2
+        var bmp = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) }
+            ?: throw Exception("cannot decode")
+        val orient = try { contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1) } ?: 1 } catch (e: Exception) { 1 }
+        val deg = when (orient) { 6 -> 90f; 3 -> 180f; 8 -> 270f; else -> 0f }
+        if (deg != 0f) bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(deg) }, true)
+        val dir = File(filesDir, "chat_images"); dir.mkdirs()
+        val f = File(dir, "p${System.currentTimeMillis()}.jpg")
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        return f
+    }
+
+    private fun pickPhoto() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), 78)
+        } catch (e: Exception) { toast("No gallery app found") }
+    }
+
+    private fun clearPhoto() { pendingImage = null; previewBox.visibility = View.GONE }
+
+    private fun sendPhoto(img: File, typed: String) {
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) { toast("Add your Groq key in SETUP first"); return }
+        val prompt = if (typed.isEmpty()) "What is in this image? Describe it briefly." else typed
+        clearPhoto(); input.setText("")
+        ChatLog.add(this, true, "\u0001IMG:${img.path}\u0001$typed"); render()
+        view.state = "thinking"; status.text = "THINKING"
+        Thread {
+            val ans = try { Brain.vision(key, prompt, img.readBytes()) } catch (e: Exception) { "Photo analysis failed: ${e.message}" }
+            ChatLog.add(this, false, ans)
+            runOnUiThread { view.state = "idle"; status.text = stateLabel(); render() }
+            if (OmenService.running && prefs.getBoolean("voice", true)) { try { startService(Intent(this, OmenService::class.java).putExtra("say", ans)) } catch (e: Exception) {} }
+        }.start()
+    }
+
+    // ---------- chat ----------
     private fun bubble(t: String, user: Boolean) = TextView(this).apply {
         text = t; textSize = 15f; setTextColor(TXT); setTextIsSelectable(true)
         setPadding(dp(14), dp(10), dp(14), dp(10))
@@ -157,13 +240,37 @@ class MainActivity : Activity() {
             .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
     }
 
+    private fun bubbleView(t: String, user: Boolean): View {
+        if (!t.startsWith("\u0001")) return bubble(t, user)
+        val end = t.indexOf('\u0001', 1)
+        val head = t.substring(1, end); val cap = t.substring(end + 1)
+        val paths = head.substringAfter(':').split('|').filter { it.isNotBlank() }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8))
+            background = pill(if (user) 0xFF222845.toInt() else 0xCC10121F.toInt(), if (user) ACC else 0xFF3A4156.toInt(), 18)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
+        }
+        if (head.startsWith("IMG:")) {
+            if (paths.isNotEmpty()) box.addView(thumb(paths[0], 220))
+        } else {
+            val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            paths.forEach { r.addView(thumb(it, 150)) }
+            hs.addView(r)
+            box.addView(hs, LinearLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.78).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        if (cap.isNotBlank()) box.addView(TextView(this).apply { text = cap; textSize = 14f; setTextColor(TXT); setPadding(dp(4), dp(6), dp(4), 0) })
+        return box
+    }
+
     private fun render() {
         if (renderedVersion == ChatLog.version) return
         renderedVersion = ChatLog.version
         chat.removeAllViews()
         val items = ChatLog.all(this)
-        if (items.isEmpty()) chat.addView(bubble("Ask me anything. Use the search button for the web, the mic to speak, or say \"Omen\" after you awaken me.", false))
-        items.forEach { chat.addView(bubble(it.second, it.first)) }
+        if (items.isEmpty()) chat.addView(bubble("Ask me anything. 📷 add a photo, ask \"show pictures of…\", use the mic, or say \"Omen\" after you awaken me.", false))
+        items.forEach { chat.addView(bubbleView(it.second, it.first)) }
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
@@ -174,6 +281,8 @@ class MainActivity : Activity() {
 
     private fun submit() {
         val t = input.text.toString().trim()
+        val img = pendingImage
+        if (img != null) { sendPhoto(img, t); return }
         if (t.isEmpty()) return
         input.setText("")
         ChatLog.add(this, true, t); render()
@@ -203,6 +312,18 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(rc: Int, res: Int, d: Intent?) {
         super.onActivityResult(rc, res, d)
+        if (rc == 78) {
+            val uri = d?.data
+            if (res == RESULT_OK && uri != null) {
+                Thread {
+                    try {
+                        val f = savePhoto(uri)
+                        runOnUiThread { pendingImage = f; previewImg.setImageBitmap(decode(f.path, dp(112))); previewBox.visibility = View.VISIBLE; input.requestFocus() }
+                    } catch (e: Exception) { runOnUiThread { toast("Could not read that image") } }
+                }.start()
+            }
+            return
+        }
         if (rc != 77) return
         if (OmenService.running) startService(Intent(this, OmenService::class.java).putExtra("resume", true))
         val t = d?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
@@ -256,6 +377,11 @@ class MainActivity : Activity() {
             fun lbl() = "Wake word \"Omen\" required: " + (if (prefs.getBoolean("wake", true)) "ON" else "OFF (answers everything it hears)")
             text = lbl()
             setOnClickListener { prefs.edit().putBoolean("wake", !prefs.getBoolean("wake", true)).apply(); text = lbl() }
+        })
+        lay.addView(Button(this).apply {
+            fun lbl() = "Smart wake (run clear commands without Omen): " + (if (prefs.getBoolean("smart", true)) "ON" else "OFF")
+            text = lbl()
+            setOnClickListener { prefs.edit().putBoolean("smart", !prefs.getBoolean("smart", true)).apply(); text = lbl() }
         })
         b("1. Allow display over apps (Clock alarms + open apps by voice)") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
         b("2. Enable WhatsApp auto-send (optional)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }

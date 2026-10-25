@@ -18,7 +18,7 @@ object ChatLog {
         for (i in maxOf(0, a.length() - MAX) until a.length()) out.put(a.get(i))
         p.edit().putString("chat", out.toString()).apply()
         version++
-        if (user) QueryHistory.add(c, text)
+        if (user) QueryHistory.add(c, if (text.startsWith("\u0001")) text.substringAfter('\u0001').substringAfter('\u0001') else text)
     }
 
     @Synchronized
@@ -30,7 +30,10 @@ object ChatLog {
 
     /** Clears only the on-screen chat. Search history is kept. */
     @Synchronized
-    fun clear(c: Context) { c.getSharedPreferences("omen", Context.MODE_PRIVATE).edit().remove("chat").apply(); version++ }
+    fun clear(c: Context) {
+        c.getSharedPreferences("omen", Context.MODE_PRIVATE).edit().remove("chat").apply(); version++
+        try { java.io.File(c.filesDir, "img").deleteRecursively(); java.io.File(c.filesDir, "chat_images").deleteRecursively() } catch (e: Exception) {}
+    }
 }
 
 object QueryHistory {

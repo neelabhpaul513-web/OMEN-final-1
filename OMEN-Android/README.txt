@@ -40,3 +40,6 @@ V5: the mic button now SEARCHES THE WEB for anything that is not a phone command
 V6: new animated AWAKEN button (glow, morphs to red 'SEND ME BACK' with a green online dot); greeting no longer repeats in chat; softer orb glow.
 
 V7: fixed the AWAKEN button body being see-through.
+
+V8: new gothic logo + wordmark; PHOTO button (ask the AI about a picture, uses a Groq vision model); IMAGE SEARCH ('show pictures of X', Wikimedia Commons);
+ tougher mic loop (error handling, watchdog, more wake-word spellings incl. 'aman', smart wake); 'call X and put it on speaker'; fuzzy contact matching.

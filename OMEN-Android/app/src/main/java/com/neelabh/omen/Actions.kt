@@ -75,18 +75,29 @@ class Actions(private val c: Context) {
         return "Timer set for $say."
     }
 
-    private fun resolveRaw(who: String): String? {
+    private fun lookup(who: String): Pair<String, String>? {
         val digits = who.replace(Regex("[^\\d+]"), "")
-        if (digits.length >= 7) return digits
-        try {
+        if (digits.length >= 7) return who to digits
+        fun q(like: String): List<Pair<String, String>> = try {
             c.contentResolver.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?", arrayOf("%$who%"), null)?.use {
-                if (it.moveToFirst()) return it.getString(0)
+                arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?", arrayOf("%$like%"), null)?.use { cur ->
+                val out = mutableListOf<Pair<String, String>>()
+                while (cur.moveToNext()) out.add((cur.getString(0) ?: "") to (cur.getString(1) ?: ""))
+                out
+            } ?: emptyList()
+        } catch (e: Exception) { emptyList() }
+        var r = q(who.trim())
+        if (r.isEmpty()) {
+            for (w in who.split(" ").filter { it.length >= 3 }.sortedByDescending { it.length }) {
+                val x = q(w).distinctBy { it.first }
+                if (x.size == 1) { r = x; break }
             }
-        } catch (e: Exception) {}
-        return null
+        }
+        return r.firstOrNull()
     }
+
+    private fun resolveRaw(who: String): String? = lookup(who)?.second
 
     private fun waNumber(raw: String): String {
         var d = raw.replace(Regex("\\D"), "")
@@ -95,11 +106,13 @@ class Actions(private val c: Context) {
         return d
     }
 
-    fun call(who: String): String {
-        val raw = resolveRaw(who) ?: return "I cannot find $who in your contacts."
+    fun call(who: String, speaker: Boolean = false): String {
+        val (name, raw) = lookup(who) ?: return "I cannot find $who in your contacts."
         return try {
-            c.getSystemService(TelecomManager::class.java).placeCall(Uri.fromParts("tel", raw, null), Bundle())
-            "Calling $who."
+            val extras = Bundle()
+            if (speaker) extras.putBoolean(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+            c.getSystemService(TelecomManager::class.java).placeCall(Uri.fromParts("tel", raw, null), extras)
+            "Calling $name" + (if (speaker) " on speaker." else ".")
         } catch (e: SecurityException) { "I need the phone permission." }
     }
 

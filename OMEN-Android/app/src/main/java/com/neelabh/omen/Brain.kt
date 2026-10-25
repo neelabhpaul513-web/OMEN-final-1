@@ -1,8 +1,12 @@
 package com.neelabh.omen
 
+import android.content.Context
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
+import java.net.URLEncoder
 import java.net.URL
 
 /** Groq backend: finds a working model on your account, tool-calling, and a web-research chain. */
@@ -84,6 +88,49 @@ object Brain {
         return clean(txt(chat(key, msgs, null))) + " Live search is not enabled on your Groq account, so that is from memory."
     }
 
+    /** Ask a vision model about a photo (JPEG bytes). */
+    fun vision(key: String, prompt: String, jpeg: ByteArray): String {
+        if (models.isEmpty()) load(key)
+        val vm = models.firstOrNull { it !in bad && Regex("llama-4|scout|maverick|vision", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+            ?: throw Exception("No vision model is available on this Groq key")
+        val content = JSONArray()
+            .put(JSONObject().put("type", "text").put("text", prompt + " Answer briefly in plain text."))
+            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(jpeg, Base64.NO_WRAP))))
+        val msgs = JSONArray().put(JSONObject().put("role", "user").put("content", content))
+        val b = JSONObject().put("model", vm).put("messages", msgs).put("max_tokens", 700).put("temperature", 0.3)
+        return clean(txt(http("POST", "/chat/completions", key, b).getJSONArray("choices").getJSONObject(0).getJSONObject("message")))
+    }
+
+    /** Free image search (Wikimedia Commons). Returns paths of downloaded thumbnails. */
+    fun images(c: Context, q: String): List<String> {
+        val ua = "OMEN/1.0 (personal Android assistant)"
+        val api = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=10&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=600&format=json&gsrsearch=" +
+            URLEncoder.encode("$q filetype:bitmap", "UTF-8")
+        val con = URL(api).openConnection() as HttpURLConnection
+        con.setRequestProperty("User-Agent", ua); con.connectTimeout = 15000; con.readTimeout = 20000
+        val pages = JSONObject(con.inputStream.bufferedReader().readText()).optJSONObject("query")?.optJSONObject("pages") ?: return emptyList()
+        val urls = mutableListOf<String>()
+        for (k in pages.keys()) {
+            val ii = pages.getJSONObject(k).optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
+            val mime = ii.optString("mime")
+            if (!mime.startsWith("image/jpeg") && !mime.startsWith("image/png")) continue
+            urls.add(ii.optString("thumburl").ifEmpty { ii.optString("url") })
+        }
+        val dir = File(c.filesDir, "img"); dir.mkdirs()
+        val out = mutableListOf<String>()
+        for (u in urls.take(9)) {
+            try {
+                val cc = URL(u).openConnection() as HttpURLConnection
+                cc.setRequestProperty("User-Agent", ua); cc.connectTimeout = 10000; cc.readTimeout = 15000
+                val f = File(dir, "i${System.currentTimeMillis()}_${out.size}.jpg")
+                cc.inputStream.use { ins -> f.outputStream().use { ins.copyTo(it) } }
+                if (f.length() > 1000) out.add(f.path)
+            } catch (e: Exception) {}
+            if (out.size >= 6) break
+        }
+        return out
+    }
+
     private fun tool(n: String, d: String, vararg p: Triple<String, String, String>): JSONObject {
         val props = JSONObject()
         p.forEach { props.put(it.first, JSONObject().put("type", it.second).put("description", it.third)) }
@@ -99,5 +146,6 @@ object Brain {
         .put(tool("send_sms", "Send an SMS text message.", Triple("to", "string", "contact or number"), Triple("message", "string", "text")))
         .put(tool("call", "Phone call a contact name or number.", Triple("to", "string", "contact or number")))
         .put(tool("remember", "Remember a lasting fact or preference about the user.", Triple("fact", "string", "the fact")))
+        .put(tool("image_search", "Show pictures or photos of something.", Triple("query", "string", "what to show pictures of")))
         .put(tool("research", "Search the web for any factual, current or news question.", Triple("query", "string", "the question")))
 }

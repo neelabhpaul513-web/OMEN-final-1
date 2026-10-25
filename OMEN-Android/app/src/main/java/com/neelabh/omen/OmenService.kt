@@ -37,7 +37,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private var typedMode = false
     private val pending = mutableListOf<Pair<String, Boolean>>()
     private val history = mutableListOf<Pair<String, String>>()
-    private val wake = Regex("\\b(omen|oman|owen|ohmen|o men|oh men|amen|omin|omn|ommen|aumen|ooman)\\b")
+    private val wake = Regex("\\b(omen|oman|owen|ohmen|o men|oh men|amen|omin|omn|ommen|aumen|ooman|aman|amaan|ahmen|aaman|ohman)\\b")
+    private val cmdVerb = Regex("^(open|launch|call|dial|phone|set|search|look up|google|research|message|whatsapp|text|sms|timer|alarm|remind|show|play|goodbye|answer|decline|what|who|when|where|why|how|tell|weather|news|find)\\b")
+    @Volatile private var lastCb = 0L
     private val numWords = mapOf("one" to "1", "two" to "2", "three" to "3", "four" to "4", "five" to "5", "six" to "6",
         "seven" to "7", "eight" to "8", "nine" to "9", "ten" to "10", "fifteen" to "15", "twenty" to "20", "thirty" to "30")
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
@@ -49,6 +51,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             main.postDelayed({ if (paused) { paused = false; listen() } }, 25000)
         }
         if (i?.getBooleanExtra("resume", false) == true) { paused = false; listen() }
+        i?.getStringExtra("say")?.let { t ->
+            if (ttsReady && prefs.getBoolean("voice", true)) { typedMode = false; say(t, false) }
+        }
         i?.getStringExtra("cmd")?.let { c ->
             val search = i.getBooleanExtra("search", false)
             if (ttsReady) typed(c, search, i.getBooleanExtra("spoken", false)) else pending.add(c to search)
@@ -76,6 +81,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             .setContentText("Say \"Omen\" followed by a command").setSmallIcon(android.R.drawable.ic_btn_speak_now).setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= 30) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) else startForeground(1, n)
         tts = TextToSpeech(this, this)
+        main.postDelayed(watchdog, 15000)
         ContextCompat.registerReceiver(this, phone, IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED), ContextCompat.RECEIVER_EXPORTED)
     }
 
@@ -110,34 +116,61 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         sendBroadcast(Intent("com.neelabh.omen.UI").setPackage(packageName).putExtra("state", state).putExtra("user", user).putExtra("reply", reply).putExtra("heard", heard))
     }
 
-    private fun listen() {
-        if (!alive || speaking || paused) return
-        main.post {
-            rec?.destroy()
-            rec = SpeechRecognizer.createSpeechRecognizer(this).also { r ->
-                r.setRecognitionListener(object : RecognitionListener {
-                    override fun onResults(b: Bundle?) {
-                        val list = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val best = list?.firstOrNull { wake.containsMatchIn(it.lowercase()) } ?: list?.firstOrNull()
-                        best?.let { handle(it) }
-                        main.postDelayed({ listen() }, 250)
+    private val doListen = Runnable {
+        if (!alive || speaking || paused) return@Runnable
+        lastCb = System.currentTimeMillis()
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            ui("listening", heard = "no speech service. install the Google app")
+            main.postDelayed({ listen() }, 6000); return@Runnable
+        }
+        rec?.destroy()
+        rec = SpeechRecognizer.createSpeechRecognizer(this).also { r ->
+            r.setRecognitionListener(object : RecognitionListener {
+                override fun onResults(b: Bundle?) {
+                    lastCb = System.currentTimeMillis()
+                    val list = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val best = list?.firstOrNull { wake.containsMatchIn(it.lowercase()) } ?: list?.firstOrNull()
+                    best?.let { handle(it) }
+                    main.postDelayed({ listen() }, 250)
+                }
+                override fun onError(e: Int) {
+                    lastCb = System.currentTimeMillis()
+                    val benign = e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                    if (!benign) ui("listening", heard = "mic error $e")
+                    val delay = when (e) {
+                        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 250L
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1500L
+                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER -> 2500L
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> 6000L
+                        else -> 700L
                     }
-                    override fun onError(e: Int) { main.postDelayed({ listen() }, if (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1500 else 400) }
-                    override fun onReadyForSpeech(p: Bundle?) { if (!speaking) ui("listening") }
-                    override fun onBeginningOfSpeech() {}
-                    override fun onRmsChanged(v: Float) {}
-                    override fun onBufferReceived(b: ByteArray?) {}
-                    override fun onEndOfSpeech() {}
-                    override fun onPartialResults(b: Bundle?) {}
-                    override fun onEvent(t: Int, b: Bundle?) {}
-                })
-                r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-                    .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
-                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L))
-            }
+                    main.postDelayed({ listen() }, delay)
+                }
+                override fun onReadyForSpeech(p: Bundle?) { lastCb = System.currentTimeMillis(); if (!speaking) ui("listening") }
+                override fun onBeginningOfSpeech() { lastCb = System.currentTimeMillis() }
+                override fun onRmsChanged(v: Float) {}
+                override fun onBufferReceived(b: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onPartialResults(b: Bundle?) {}
+                override fun onEvent(t: Int, b: Bundle?) {}
+            })
+            r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+                .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L))
+        }
+    }
+
+    private fun listen() { main.removeCallbacks(doListen); main.post(doListen) }
+
+    // restarts the microphone if the recogniser silently dies
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!alive) return
+            if (!speaking && !paused && System.currentTimeMillis() - lastCb > 25000) listen()
+            main.postDelayed(this, 15000)
         }
     }
 
@@ -184,7 +217,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         if (m != null) {
             cmd = t.substring(m.range.last + 1).trim(' ', ',', '.', '!')
             if (cmd.isEmpty()) { awaiting = true; say("I am listening."); return }
-        } else if (!awaiting && !engaged && prefs.getBoolean("wake", true)) { ui("listening", heard = raw); return }
+        } else if (!awaiting && !engaged && prefs.getBoolean("wake", true)) {
+            if (!(prefs.getBoolean("smart", true) && cmdVerb.containsMatchIn(t))) { ui("listening", heard = raw); return }
+        }
         awaiting = false
         ui("thinking", user = "› $raw")
         Thread { try { execute(cmd) } catch (e: Exception) { say("Something broke. ${e.message}") }; engagedUntil = System.currentTimeMillis() + 20000 }.start()
@@ -195,6 +230,14 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         if (key.isBlank()) return say("Give me your Groq key in the settings.")
         ChatLog.add(this, false, "Searching the web…"); ui("thinking")
         say(Brain.research(key, q))
+    }
+
+    private fun imageSearch(q: String) {
+        ChatLog.add(this, false, "Searching images…"); ui("thinking")
+        val paths = Brain.images(this, q)
+        if (paths.isEmpty()) return say("I found no images of $q.")
+        ChatLog.add(this, false, "\u0001GAL:" + paths.joinToString("|") + "\u0001Images of $q (Wikimedia Commons)")
+        say("Here are images of $q.", false)
     }
 
     private fun looksLikeQuestion(t: String): Boolean {
@@ -223,12 +266,20 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             }
         }
         m = Regex("^(?:call|dial|phone)\\s+(.+)").find(t)
-        if (m != null) return say(act.call(m.groupValues[1]))
+        if (m != null) {
+            val rest = m.groupValues[1]
+            val spk = Regex("\\b(speaker|loudspeaker|speakerphone)\\b").containsMatchIn(rest)
+            val who = rest.split(Regex("\\s+(?:and|on|with|in|then|using)\\s+"))[0].trim()
+            return say(act.call(who, spk))
+        }
         m = Regex("(?:whatsapp|message|text|sms)\\s+(.+?)\\s+(?:saying|that|say)\\s+(.+)").find(t)
         if (m != null) {
             val sms = Regex("^(text|sms)\\b").containsMatchIn(t)
             return say(if (sms) act.sms(m.groupValues[1], m.groupValues[2]) else act.whatsapp(m.groupValues[1], m.groupValues[2]))
         }
+        m = Regex("^(?:show|find|get|search|give|display)(?:\\s+me)?(?:\\s+(?:some|a few))?\\s+(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
+            ?: Regex("^(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
+        if (m != null) return imageSearch(m.groupValues[1])
         m = Regex("^(?:search for|search|look up|google|research|find out about|find out|tell me about)\\s+(.+)").find(t)
         if (m != null) {
             return searchWeb(m.groupValues[1])
@@ -264,7 +315,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
                 out.append(runTool(f.getString("name"), args, key)).append(' ')
             }
             history.add(q to "(done)")
-            say(out.toString().trim())
+            out.toString().trim().let { if (it.isNotEmpty()) say(it) }
         } else {
             val a = Brain.clean(Brain.txt(msg)).ifEmpty { "Done." }
             history.add(q to a); say(a)
@@ -282,6 +333,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             val s = (prefs.getStringSet("facts", emptySet()) ?: emptySet()).toMutableSet(); s.add(a.optString("fact"))
             prefs.edit().putStringSet("facts", s.toList().takeLast(40).toSet()).apply(); "I will remember."
         }
+        "image_search" -> { imageSearch(a.optString("query")); "" }
         "research" -> { ui("thinking"); Brain.research(key, a.optString("query")) }
         else -> "I do not know that one."
     }
