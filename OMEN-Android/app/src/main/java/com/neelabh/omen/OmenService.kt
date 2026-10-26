@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import android.view.KeyEvent
 import java.text.DateFormat
 import java.util.*
 
@@ -30,7 +31,8 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private val main = Handler(Looper.getMainLooper())
     private var speaking = false
     private var alive = true
-    private var awaiting = false
+    private var awaitUntil = 0L
+    private lateinit var overlay: OverlayUi
     private var ringing = false
     private var callerNumber: String? = null
     private var engagedUntil = 0L
@@ -40,7 +42,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private val pending = mutableListOf<Pair<String, Boolean>>()
     private val history = mutableListOf<Pair<String, String>>()
     private val wake = Regex("\\b(omen|oman|owen|ohmen|o men|oh men|amen|omin|omn|ommen|aumen|ooman|aman|amaan|ahmen|aaman|ohman)\\b")
-    private val cmdVerb = Regex("^(open|launch|call|dial|phone|set|search|look up|google|research|message|whatsapp|text|sms|timer|alarm|remind|show|play|goodbye|answer|decline|what|who|when|where|why|how|tell|weather|news|find)\\b")
+    private val cmdVerb = Regex("^(open|launch|call|dial|phone|set|search|look up|google|research|message|whatsapp|text|sms|timer|alarm|remind|show|play|pause|resume|next|skip|navigate|directions|flashlight|torch|volume|mute|unmute|note|take a note|read|generate|create|make|draw|imagine|goodbye|answer|decline|what|who|when|where|why|how|tell|weather|news|find)\\b")
     @Volatile private var lastCb = 0L
     private val numWords = mapOf("one" to "1", "two" to "2", "three" to "3", "four" to "4", "five" to "5", "six" to "6",
         "seven" to "7", "eight" to "8", "nine" to "9", "ten" to "10", "fifteen" to "15", "twenty" to "20", "thirty" to "30")
@@ -78,6 +80,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         running = true
         act = Actions(this)
+        overlay = OverlayUi(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("omen", "OMEN", NotificationManager.IMPORTANCE_LOW))
         val n = NotificationCompat.Builder(this, "omen").setContentTitle("OMEN is watching from the shadows")
             .setContentText("Say \"Omen\" followed by a command").setSmallIcon(android.R.drawable.ic_btn_speak_now).setOngoing(true).build()
@@ -112,10 +115,13 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         tts.speak(t, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
 
+    private fun activate() { main.post { if (!MainActivity.visible) overlay.show() } }
+
     private fun ui(state: String, user: String? = null, reply: String? = null, heard: String? = null, log: Boolean = true) {
         user?.let { ChatLog.add(this, true, it.removePrefix("› ")) }
         if (reply != null && state == "speaking" && log) ChatLog.add(this, false, reply)
         sendBroadcast(Intent("com.neelabh.omen.UI").setPackage(packageName).putExtra("state", state).putExtra("user", user).putExtra("reply", reply).putExtra("heard", heard))
+        main.post { overlay.update(state, user, reply) }
     }
 
     private val doListen = Runnable {
@@ -215,14 +221,16 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         }
         var cmd = t
         val m = wake.find(t)
-        val engaged = System.currentTimeMillis() < engagedUntil
+        val now = System.currentTimeMillis()
+        val engaged = now < engagedUntil
         if (m != null) {
             cmd = t.substring(m.range.last + 1).trim(' ', ',', '.', '!')
-            if (cmd.isEmpty()) { awaiting = true; say("I am listening."); return }
-        } else if (!awaiting && !engaged && prefs.getBoolean("wake", true)) {
+            if (cmd.isEmpty()) { awaitUntil = now + 12000; activate(); say("What can I do for you, sir?", false); return }
+        } else if (now >= awaitUntil && !engaged && prefs.getBoolean("wake", true)) {
             if (!(prefs.getBoolean("smart", true) && cmdVerb.containsMatchIn(t))) { ui("listening", heard = raw); return }
         }
-        awaiting = false
+        awaitUntil = 0L
+        activate()
         ui("thinking", user = "› $raw")
         Thread { try { execute(cmd) } catch (e: Exception) { say("Something broke. ${e.message}") }; engagedUntil = System.currentTimeMillis() + 20000 }.start()
     }
@@ -280,6 +288,32 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             return say("Battery is at " + getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) + " percent.")
         val urlM = Regex("https?://\\S+").find(c)
         if (urlM != null) return readLink(urlM.value.trimEnd('.', ',', ')'), c.replace(urlM.value, "").trim().ifEmpty { "Summarize this page." })
+        // phone controls
+        if (Regex("\\b(flashlight|torch)\\b").containsMatchIn(t))
+            return say(act.flashlight(!Regex("\\b(off|disable|close|stop)\\b").containsMatchIn(t)))
+        m = Regex("\\b(wi-?fi|bluetooth|airplane|location|display|sound) settings\\b").find(t)
+        if (m != null) return say(act.settingsPanel(m.groupValues[1]))
+        if (Regex("\\b(volume (up|down)|(increase|raise|decrease|lower)( the)? volume|louder|quieter|turn it (up|down)|unmute|mute|max volume|full volume)\\b").containsMatchIn(t)) {
+            val kind = when {
+                Regex("unmute").containsMatchIn(t) -> "unmute"
+                Regex("mute").containsMatchIn(t) -> "mute"
+                Regex("max|full").containsMatchIn(t) -> "max"
+                Regex("down|decrease|lower|quieter").containsMatchIn(t) -> "down"
+                else -> "up"
+            }
+            return say(act.volume(kind))
+        }
+        if (Regex("^(?:pause|stop)(?: the)?(?: music| song| video| playback| player)?$").containsMatchIn(t)) return say(act.media(KeyEvent.KEYCODE_MEDIA_PAUSE))
+        if (Regex("^(?:resume|continue|play)(?: the)?(?: music| song| video| playback| player)?$").containsMatchIn(t)) return say(act.media(KeyEvent.KEYCODE_MEDIA_PLAY))
+        if (Regex("^(?:next|skip)(?: the)?(?: song| track| video)?$").containsMatchIn(t)) return say(act.media(KeyEvent.KEYCODE_MEDIA_NEXT))
+        if (Regex("^(?:previous|go back)(?: the)?(?: song| track| video)?$").containsMatchIn(t)) return say(act.media(KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+        m = Regex("^(?:take a note|make a note|add a note|note down|note)\\s*(?:that|to)?[:,]?\\s+(.+)").find(t)
+        if (m != null) return say(act.addNote(m.groupValues[1]))
+        if (Regex("\\b(read|show|list|what are)( me)?( my)? notes\\b").containsMatchIn(t)) return say(act.notes())
+        m = Regex("^(?:navigate to|directions to|take me to|route to|drive to|how do i get to)\\s+(.+)").find(t)
+        if (m != null) return say(act.navigate(m.groupValues[1]))
+        m = Regex("^play\\s+(.+?)(?:\\s+on\\s+(youtube|spotify))?$").find(t)
+        if (m != null) return say(act.playOn(m.groupValues[1], m.groupValues[2]))
         m = Regex("^(?:please\\s+)?(?:open|launch|start)\\s+(.+)").find(t)
         if (m != null) return say(act.openApp(m.groupValues[1]))
         m = Regex("timer.*?(\\d+(?:\\.\\d+)?)\\s*(sec|min|hour|hr)").find(t) ?: Regex("(\\d+(?:\\.\\d+)?)\\s*(sec|min|hour|hr)\\w*\\s+timer").find(t)
@@ -376,6 +410,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         running = false; alive = false
+        try { overlay.hide() } catch (e: Exception) {}
         rec?.destroy(); tts.shutdown()
         try { unregisterReceiver(phone) } catch (e: Exception) {}
         ui("idle", reply = "Back in the shadows.")

@@ -4,6 +4,11 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
+import android.view.KeyEvent
+import org.json.JSONArray
 import android.net.Uri
 import android.os.Bundle
 import android.provider.AlarmClock
@@ -98,6 +103,68 @@ class Actions(private val c: Context) {
     }
 
     private fun resolveRaw(who: String): String? = lookup(who)?.second
+
+    fun flashlight(on: Boolean): String = try {
+        val cm = c.getSystemService(CameraManager::class.java)
+        val id = cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
+        if (id == null) "This phone has no flashlight." else { cm.setTorchMode(id, on); if (on) "Flashlight on." else "Flashlight off." }
+    } catch (e: Exception) { "I could not control the flashlight." }
+
+    fun volume(kind: String): String {
+        val am = c.getSystemService(AudioManager::class.java)
+        val s = AudioManager.STREAM_MUSIC; val ui = AudioManager.FLAG_SHOW_UI
+        when (kind) {
+            "up" -> am.adjustStreamVolume(s, AudioManager.ADJUST_RAISE, ui)
+            "down" -> am.adjustStreamVolume(s, AudioManager.ADJUST_LOWER, ui)
+            "mute" -> am.adjustStreamVolume(s, AudioManager.ADJUST_MUTE, ui)
+            "unmute" -> am.adjustStreamVolume(s, AudioManager.ADJUST_UNMUTE, ui)
+            "max" -> am.setStreamVolume(s, am.getStreamMaxVolume(s), ui)
+        }
+        return "Done."
+    }
+
+    fun media(code: Int): String {
+        val am = c.getSystemService(AudioManager::class.java)
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        return "Done."
+    }
+
+    fun addNote(text: String): String {
+        val p = c.getSharedPreferences("omen", Context.MODE_PRIVATE)
+        val a = try { JSONArray(p.getString("notes", "[]")) } catch (e: Exception) { JSONArray() }
+        a.put(text); p.edit().putString("notes", a.toString()).apply()
+        return "Noted."
+    }
+
+    fun notes(): String {
+        val a = try { JSONArray(c.getSharedPreferences("omen", Context.MODE_PRIVATE).getString("notes", "[]")) } catch (e: Exception) { JSONArray() }
+        if (a.length() == 0) return "You have no notes."
+        val n = a.length()
+        return "Your notes. " + (maxOf(0, n - 5) until n).joinToString(". ") { "${it + 1}. ${a.getString(it)}" }
+    }
+
+    fun navigate(place: String): String {
+        val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(place))).setPackage("com.google.android.apps.maps")
+        if (go(nav)) return "Navigating to $place."
+        return if (go(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(place))))) "Showing $place on the map." else "I could not open maps."
+    }
+
+    fun playOn(q: String, where: String): String {
+        if (where == "spotify" && go(Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:" + Uri.encode(q))).setPackage("com.spotify.music"))) return "Searching $q on Spotify."
+        if (go(Intent(Intent.ACTION_SEARCH).setPackage("com.google.android.youtube").putExtra("query", q))) return "Playing $q on YouTube."
+        return if (go(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(q))))) "Searching $q on YouTube." else "I could not open YouTube."
+    }
+
+    fun settingsPanel(kind: String): String {
+        val action = when (kind.replace("-", "")) {
+            "wifi" -> Settings.ACTION_WIFI_SETTINGS; "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            "airplane" -> Settings.ACTION_AIRPLANE_MODE_SETTINGS; "location" -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            "display" -> Settings.ACTION_DISPLAY_SETTINGS; "sound" -> Settings.ACTION_SOUND_SETTINGS
+            else -> Settings.ACTION_SETTINGS
+        }
+        return if (go(Intent(action))) "Opening $kind settings." else "I could not open settings."
+    }
 
     private fun waNumber(raw: String): String {
         var d = raw.replace(Regex("\\D"), "")

@@ -53,3 +53,8 @@ V10: references (source links) under web answers + Google link; read any website
  instant time/date/battery answers; permission checklist (SETUP > Check all permissions); title no longer overlaps the orb.
 
 V10.1: fixed build error (missing DateFormat import) and text escapes.
+
+V11: HEY OMEN from anywhere (floating glass panel with Omen's face over any app; says "What can I do for you, sir?"); needs SETUP > allow display over apps + AWAKEN OMEN.
+ New voice/phone controls: flashlight, volume, media play/pause/next, notes, navigate, play on YouTube/Spotify, wifi/bluetooth settings, time/date/battery.
+ Chat is now transparent glass (slider in SETUP) so Omen's face shows through. Background = black wind waves video, 1440x2560 (2K), looping; toggle in SETUP.
+ After a phone restart a notification appears: tap it to awaken OMEN again.

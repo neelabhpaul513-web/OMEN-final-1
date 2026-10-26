@@ -7,6 +7,7 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.drawable.Drawable
@@ -43,6 +44,7 @@ class MainActivity : Activity() {
     ).apply { if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS) }.toTypedArray()
 
     private lateinit var view: OmenView
+    private lateinit var wind: WindVideoView
     private lateinit var status: TextView
     private lateinit var chat: LinearLayout
     private lateinit var scroll: ScrollView
@@ -96,17 +98,22 @@ class MainActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         window.statusBarColor = 0xFF05050B.toInt(); window.navigationBarColor = 0xFF07070E.toInt()
-        val root = FrameLayout(this)
+        val root = FrameLayout(this).apply { setBackgroundColor(0xFF020205.toInt()) }
+        wind = WindVideoView(this)
+        root.addView(wind, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         view = OmenView(this); root.addView(view)
+        wind.wanted = prefs.getBoolean("wind", true)
+        wind.onReady = { runOnUiThread { view.transparentBg = true } }
+        wind.onFail = { runOnUiThread { view.transparentBg = false } }
         val title = ImageView(this).apply { setImageResource(R.drawable.omen_wordmark); setColorFilter(0xFFC9D4F0.toInt()); adjustViewBounds = true }
         root.addView(title, FrameLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(30) })
 
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(4)) }
-        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 47f))
-        scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
+        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 22f))
+        scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isVerticalFadingEdgeEnabled = true; setFadingEdgeLength(dp(56)) }
         chat = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
         scroll.addView(chat)
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 53f))
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 78f))
 
         status = tv("DORMANT", 12f, MUT).apply { letterSpacing = 0.3f }
         col.addView(status)
@@ -179,14 +186,17 @@ class MainActivity : Activity() {
         setContentView(root)
         render(); refresh()
         if (prefs.getString("key", "").isNullOrBlank()) setup()
+        if (intent?.getBooleanExtra("autostart", false) == true && !OmenService.running && perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) start()
     }
 
     override fun onStart() {
         super.onStart(); visible = true
         ContextCompat.registerReceiver(this, uiRx, IntentFilter("com.neelabh.omen.UI"), ContextCompat.RECEIVER_NOT_EXPORTED)
         render(); refresh()
+        if (prefs.getBoolean("wind", true)) wind.playNow()
     }
-    override fun onStop() { super.onStop(); visible = false; try { unregisterReceiver(uiRx) } catch (e: Exception) {} }
+    override fun onDestroy() { super.onDestroy(); wind.release() }
+    override fun onStop() { super.onStop(); visible = false; wind.holdNow(); try { unregisterReceiver(uiRx) } catch (e: Exception) {} }
     override fun onResume() { super.onResume(); AlarmReceiver.rt?.stop(); refresh() }
 
     // ---------- images ----------
@@ -322,13 +332,19 @@ class MainActivity : Activity() {
     }
 
     // ---------- chat ----------
+    private fun glassFill(user: Boolean): Int {
+        val a = (prefs.getInt("glass", 28) * 255 / 100).coerceIn(0, 255)
+        return if (user) Color.argb((a + 25).coerceAtMost(255), 34, 40, 69) else Color.argb(a, 16, 18, 31)
+    }
+    private fun glassStroke(user: Boolean): Int = if (user) 0x99A8B8FF.toInt() else 0x44A8B8FF
+
     private fun bubble(t: String, user: Boolean) = TextView(this).apply {
-        text = t; textSize = 15f; setTextColor(TXT)
+        text = t; textSize = 15f; setTextColor(TXT); setShadowLayer(6f, 0f, 1f, 0xDD000000.toInt())
         Linkify.addLinks(this, Linkify.WEB_URLS); movementMethod = LinkMovementMethod.getInstance(); setLinkTextColor(ACC)
         setOnLongClickListener { (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OMEN", t)); toast("Copied"); true }
         setPadding(dp(14), dp(10), dp(14), dp(10))
         maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()
-        background = pill(if (user) 0xFF222845.toInt() else 0xCC10121F.toInt(), if (user) ACC else 0xFF3A4156.toInt(), 18)
+        background = pill(glassFill(user), glassStroke(user), 18)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
     }
@@ -340,7 +356,7 @@ class MainActivity : Activity() {
         val paths = head.substringAfter(':').split('|').filter { it.isNotBlank() }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8))
-            background = pill(if (user) 0xFF222845.toInt() else 0xCC10121F.toInt(), if (user) ACC else 0xFF3A4156.toInt(), 18)
+            background = pill(glassFill(user), glassStroke(user), 18)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
         }
@@ -480,6 +496,24 @@ class MainActivity : Activity() {
             setOnClickListener { prefs.edit().putBoolean("smart", !prefs.getBoolean("smart", true)).apply(); text = lbl() }
         })
         b("Check all permissions and access") { showAccess() }
+        lay.addView(TextView(this).apply { text = "Chat bubble opacity (lower = more transparent, Omen's face shows through)"; textSize = 12f; setPadding(0, dp(10), 0, 0) })
+        lay.addView(SeekBar(this).apply {
+            max = 80; progress = prefs.getInt("glass", 28)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { prefs.edit().putInt("glass", p).apply(); renderedVersion = -1; render() }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        })
+        lay.addView(Button(this).apply {
+            fun lbl() = "Animated wind background: " + (if (prefs.getBoolean("wind", true)) "ON" else "OFF (saves battery)")
+            text = lbl()
+            setOnClickListener {
+                val on = !prefs.getBoolean("wind", true); prefs.edit().putBoolean("wind", on).apply()
+                if (on) { wind.wanted = true; wind.playNow() } else { wind.stopForGood(); view.transparentBg = false }
+                text = lbl()
+            }
+        })
         b("1. Allow display over apps (Clock alarms + open apps by voice)") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
         b("2. Enable WhatsApp auto-send (optional)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         b("3. Allow background use (battery)") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
