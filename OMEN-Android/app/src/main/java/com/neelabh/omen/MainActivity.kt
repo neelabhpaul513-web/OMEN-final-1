@@ -7,25 +7,27 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.media.ExifInterface
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.MediaStore
-import android.text.method.LinkMovementMethod
-import android.text.util.Linkify
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.text.Editable
+import android.text.InputType
+import android.text.TextUtils
+import android.text.TextWatcher
+import android.text.method.LinkMovementMethod
+import android.text.util.Linkify
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.core.content.ContextCompat
 import java.io.File
@@ -34,31 +36,34 @@ class MainActivity : Activity() {
     companion object { @Volatile var visible = false }
 
     private val ACC = 0xFFA8B8FF.toInt()
-    private val MUT = 0xFF8D9BB8.toInt()
-    private val TXT = 0xFFE6ECFF.toInt()
-    private val INK = 0xFF06060C.toInt()
-
-    private val perms = mutableListOf(
-        Manifest.permission.RECORD_AUDIO, Manifest.permission.CALL_PHONE, Manifest.permission.ANSWER_PHONE_CALLS,
-        Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.SEND_SMS
-    ).apply { if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS) }.toTypedArray()
+    private val MUT = 0xFF9A9AA2.toInt()
+    private val TXT = 0xFFEDEBE6.toInt()
+    private val INK = 0xFF111114.toInt()
+    private val perms = Perms.list()
 
     private lateinit var view: OmenView
     private lateinit var wind: WindVideoView
     private lateinit var status: TextView
     private lateinit var chat: LinearLayout
     private lateinit var scroll: ScrollView
-    private lateinit var btn: AwakenView
+    private lateinit var power: AwakenView
     private lateinit var input: EditText
-    private lateinit var webBtn: ImageButton
-    private lateinit var voiceBtn: ImageButton
+    private lateinit var actionBtn: ImageButton
+    private lateinit var modeChip: TextView
     private lateinit var previewBox: LinearLayout
-    private lateinit var previewImg: ImageView
+    private lateinit var attachRow: LinearLayout
+    private lateinit var chipRow: LinearLayout
+    private lateinit var drawerRoot: FrameLayout
+    private lateinit var scrim: View
+    private lateinit var panel: LinearLayout
+    private lateinit var histList: ListView
+    private lateinit var histEmpty: TextView
+    private var panelW = 0
     private var webMode = false
     private var pendingText: String? = null
     private var pendingSearch = false
     private val pendingImages = mutableListOf<File>()
-    private lateinit var previewLabel: TextView
+    private val pendingDocs = mutableListOf<Pair<String, String>>()
     private var renderedVersion = -1
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
@@ -73,9 +78,10 @@ class MainActivity : Activity() {
 
     private fun stateLabel() = when (view.state) {
         "listening" -> "LISTENING"; "thinking" -> "THINKING"; "speaking" -> "SPEAKING"
-        else -> if (OmenService.running) "WATCHING" else "DORMANT"
+        else -> if (OmenService.running) "WATCHING · SAY “HEY OMEN”" else "DORMANT"
     }
 
+    // ---------- small helpers ----------
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
     private fun icon(res: Int, tint: Int): Drawable? = ContextCompat.getDrawable(this, res)?.mutate()?.also { it.setTint(tint) }
@@ -83,123 +89,237 @@ class MainActivity : Activity() {
     private fun circle(fill: Int, stroke: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(fill); setStroke(dp(1), stroke) }
     private fun pill(fill: Int, stroke: Int, r: Int) = GradientDrawable().apply { cornerRadius = dp(r).toFloat(); setColor(fill); setStroke(dp(1), stroke) }
 
-    private fun circleBtn(res: Int, desc: String, f: () -> Unit) = ImageButton(this).apply {
-        setImageResource(res); imageTintList = ColorStateList.valueOf(TXT); contentDescription = desc
-        background = circle(0xCC10121F.toInt(), 0xFF3A4156.toInt()); scaleType = ImageView.ScaleType.CENTER_INSIDE
+    private fun circleBtn(res: Int, desc: String, fill: Int = 0xFF2C2C30.toInt(), tint: Int = TXT, f: () -> Unit) = ImageButton(this).apply {
+        setImageResource(res); imageTintList = ColorStateList.valueOf(tint); contentDescription = desc
+        background = circle(fill, 0x22FFFFFF); scaleType = ImageView.ScaleType.CENTER_INSIDE
         setPadding(dp(11), dp(11), dp(11), dp(11)); setOnClickListener { f() }
     }
 
-    private fun chip(label: String, res: Int, f: () -> Unit) = TextView(this).apply {
-        text = label; textSize = 12f; letterSpacing = 0.1f; setTextColor(MUT); gravity = Gravity.CENTER
-        compoundDrawablePadding = dp(6); setCompoundDrawablesWithIntrinsicBounds(icon(res, MUT), null, null, null)
-        setPadding(0, dp(10), 0, dp(10)); isClickable = true; setOnClickListener { f() }
-    }
+    private fun lp(w: Int, h: Int) = LinearLayout.LayoutParams(w, h)
+    private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+    private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
+    // ---------- screen ----------
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         window.statusBarColor = 0xFF05050B.toInt(); window.navigationBarColor = 0xFF07070E.toInt()
         val root = FrameLayout(this).apply { setBackgroundColor(0xFF020205.toInt()) }
         wind = WindVideoView(this)
-        root.addView(wind, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(wind, FrameLayout.LayoutParams(MATCH, MATCH))
         view = OmenView(this); root.addView(view)
         wind.wanted = prefs.getBoolean("wind", true)
         wind.onReady = { runOnUiThread { view.transparentBg = true } }
         wind.onFail = { runOnUiThread { view.transparentBg = false } }
-        val title = ImageView(this).apply { setImageResource(R.drawable.omen_wordmark); setColorFilter(0xFFC9D4F0.toInt()); adjustViewBounds = true }
-        root.addView(title, FrameLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(30) })
 
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(4)) }
-        col.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 22f))
+        // chat column: transparent chat + Claude-style input card
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(72), dp(14), dp(10)) }
+        col.addView(View(this), lp(MATCH, 0).apply { weight = 20f })
         scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isVerticalFadingEdgeEnabled = true; setFadingEdgeLength(dp(56)) }
         chat = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
         scroll.addView(chat)
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 78f))
-
-        status = tv("DORMANT", 12f, MUT).apply { letterSpacing = 0.3f }
+        col.addView(scroll, lp(MATCH, 0).apply { weight = 80f })
+        status = tv("DORMANT", 11f, MUT).apply { letterSpacing = 0.25f; setPadding(0, dp(4), 0, dp(6)) }
         col.addView(status)
 
-        // photo preview + notes actions (hidden until a photo is attached)
-        previewBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        val prow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        previewImg = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; background = pill(0xFF10121F.toInt(), ACC, 12); clipToOutline = true }
-        prow.addView(previewImg, LinearLayout.LayoutParams(dp(56), dp(56)))
-        previewLabel = tv("", 12f, MUT).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
-        prow.addView(previewLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) })
-        prow.addView(circleBtn(R.drawable.ic_close, "Remove photos") { clearPhoto() }, LinearLayout.LayoutParams(dp(36), dp(36)))
-        previewBox.addView(prow)
-        val acts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun act(label: String, mode: String) = TextView(this).apply {
-            text = label; textSize = 13f; setTextColor(ACC); setPadding(dp(14), dp(8), dp(14), dp(8))
-            background = pill(0xCC10121F.toInt(), ACC, 18); isClickable = true
-            setOnClickListener { sendPhotos(mode, input.text.toString().trim()) }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; background = pill(0xE61B1B1F.toInt(), 0x33FFFFFF, 28)
+            setPadding(dp(14), dp(10), dp(14), dp(12))
         }
-        for ((l, md) in listOf("Read text" to "read", "Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz"))
-            acts.addView(act(l, md), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
-        previewBox.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(acts) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
-        col.addView(previewBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        // attachments (photos / documents) appear at the top of the card
+        previewBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE; setPadding(0, 0, 0, dp(8)) }
+        attachRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        chipRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        previewBox.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(attachRow) })
+        previewBox.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) }, lp(MATCH, WRAP).apply { topMargin = dp(8) })
+        card.addView(previewBox)
 
-        // row A: text box + send
-        val rowA = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         input = EditText(this).apply {
-            hint = "Type or ask OMEN…"; setHintTextColor(0xFF6F7A94.toInt()); setTextColor(TXT)
-            background = pill(0xCC10121F.toInt(), 0xFF3A4156.toInt(), 24); setPadding(dp(18), dp(8), dp(18), dp(8)); isSingleLine = true
-            imeOptions = EditorInfo.IME_ACTION_SEND
-            setOnEditorActionListener { _, _, _ -> submit(); true }
+            hint = "Message OMEN or tap the waveform to talk"; setHintTextColor(0xFF8A8A92.toInt()); setTextColor(TXT)
+            background = null; textSize = 17f; maxLines = 5
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setPadding(dp(4), dp(8), dp(4), dp(10))
+            addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) { updateAction() }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
         }
-        rowA.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
-        val send = circleBtn(R.drawable.ic_send, "Send") { submit() }.apply { background = circle(ACC, ACC); imageTintList = ColorStateList.valueOf(INK) }
-        rowA.addView(send, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
-        col.addView(rowA, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        card.addView(input)
 
-        // row B: tools
-        val photo = circleBtn(R.drawable.ic_photo, "Add photo") { pickPhoto() }
-        val mic = circleBtn(R.drawable.ic_mic, "Speak") { startVoice() }
-        webBtn = circleBtn(R.drawable.ic_search, "Web search mode") {
-            webMode = !webMode
-            webBtn.background = if (webMode) circle(0xFF3A4570.toInt(), ACC) else circle(0xCC10121F.toInt(), 0xFF3A4156.toInt())
-            webBtn.imageTintList = ColorStateList.valueOf(if (webMode) ACC else TXT)
-            toast(if (webMode) "Web search mode ON" else "Chat mode")
+        val brow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val plus = circleBtn(R.drawable.ic_plus, "More") { }
+        plus.setOnClickListener { showPlus(plus) }
+        brow.addView(plus, lp(dp(44), dp(44)))
+        modeChip = TextView(this).apply {
+            textSize = 15f; setTextColor(TXT); gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0)
+            background = pill(0xFF2C2C30.toInt(), 0x22FFFFFF, 22); isClickable = true
+            setOnClickListener { setWebMode(!webMode) }
         }
-        voiceBtn = circleBtn(if (prefs.getBoolean("voice", true)) R.drawable.ic_vol_on else R.drawable.ic_vol_off, "Spoken replies") {
-            val v = !prefs.getBoolean("voice", true); prefs.edit().putBoolean("voice", v).apply()
-            voiceBtn.setImageResource(if (v) R.drawable.ic_vol_on else R.drawable.ic_vol_off)
-            toast(if (v) "Typed replies will be spoken" else "Typed replies are silent")
-        }
-        val rowB = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        for (v in listOf(photo, mic, webBtn, voiceBtn)) {
-            val cell = FrameLayout(this); cell.addView(v, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER))
-            rowB.addView(cell, LinearLayout.LayoutParams(0, dp(46), 1f))
-        }
-        col.addView(rowB, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        brow.addView(modeChip, lp(WRAP, dp(44)).apply { marginStart = dp(8) })
+        brow.addView(View(this), lp(0, 1).apply { weight = 1f })
+        val mic = circleBtn(R.drawable.ic_mic, "Dictate") { startDictation() }
+        brow.addView(mic, lp(dp(44), dp(44)))
+        actionBtn = circleBtn(R.drawable.ic_wave, "Talk", 0xFFF3F1EC.toInt(), INK) { if (hasContent()) submit() else startVoice() }
+        brow.addView(actionBtn, lp(dp(44), dp(44)).apply { marginStart = dp(8) })
+        card.addView(brow)
+        col.addView(card)
+        root.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        btn = AwakenView(this).apply { onToggle = { toggle() } }
-        col.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)).apply { topMargin = dp(2) })
+        // top bar: menu (left), wordmark, awaken power button (right)
+        val topBar = FrameLayout(this)
+        topBar.addView(circleBtn(R.drawable.ic_menu, "Menu", 0x66101018) { openDrawer() }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.START or Gravity.CENTER_VERTICAL))
+        val title = ImageView(this).apply { setImageResource(R.drawable.omen_wordmark); setColorFilter(0xFFC9D4F0.toInt()); adjustViewBounds = true }
+        topBar.addView(title, FrameLayout.LayoutParams(dp(104), WRAP, Gravity.CENTER))
+        power = AwakenView(this).apply { compact = true; onToggle = { toggle() } }
+        topBar.addView(power, FrameLayout.LayoutParams(dp(60), dp(60), Gravity.END or Gravity.CENTER_VERTICAL))
+        root.addView(topBar, FrameLayout.LayoutParams(MATCH, dp(66), Gravity.TOP).apply { topMargin = dp(8); marginStart = dp(14); marginEnd = dp(8) })
 
-        val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        links.addView(chip("HISTORY", R.drawable.ic_history) { showHistory() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        links.addView(chip("SETUP", R.drawable.ic_gear) { setup() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        links.addView(chip("CLEAR", R.drawable.ic_delete) { ChatLog.clear(this); render() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        col.addView(links)
-
-        root.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        buildDrawer(root)
         setContentView(root)
-        render(); refresh()
-        if (prefs.getString("key", "").isNullOrBlank()) setup()
-        if (intent?.getBooleanExtra("autostart", false) == true && !OmenService.running && perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) start()
+        setWebMode(false); updateAction(); render(); refresh()
+        if (prefs.getString("key", "").isNullOrBlank()) { toast("Add your Groq key in Settings"); startActivity(Intent(this, SettingsActivity::class.java)) }
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(i: Intent?) { super.onNewIntent(i); intent = i; handleIntent(i) }
+
+    @Suppress("DEPRECATION")
+    private fun handleIntent(i: Intent?) {
+        if (i == null) return
+        if (i.getBooleanExtra("autostart", false) && !OmenService.running && perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) reallyStart()
+        val uris = mutableListOf<Uri>()
+        when (i.action) {
+            Intent.ACTION_SEND -> {
+                i.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris.add(it) }
+                if (uris.isEmpty()) i.getStringExtra(Intent.EXTRA_TEXT)?.let { input.setText(it) }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> i.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris.addAll(it) }
+        }
+        if (uris.isNotEmpty()) { addUris(uris); intent = Intent() }
     }
 
     override fun onStart() {
         super.onStart(); visible = true
         ContextCompat.registerReceiver(this, uiRx, IntentFilter("com.neelabh.omen.UI"), ContextCompat.RECEIVER_NOT_EXPORTED)
         render(); refresh()
-        if (prefs.getBoolean("wind", true)) wind.playNow()
+        if (prefs.getBoolean("wind", true)) wind.playNow() else { wind.stopForGood(); view.transparentBg = false }
     }
     override fun onDestroy() { super.onDestroy(); wind.release() }
     override fun onStop() { super.onStop(); visible = false; wind.holdNow(); try { unregisterReceiver(uiRx) } catch (e: Exception) {} }
     override fun onResume() { super.onResume(); AlarmReceiver.rt?.stop(); refresh() }
+    override fun onBackPressed() { if (drawerRoot.visibility == View.VISIBLE) closeDrawer() else super.onBackPressed() }
 
-    // ---------- images ----------
+    // ---------- drawer (Claude-style) ----------
+    private fun buildDrawer(root: FrameLayout) {
+        drawerRoot = FrameLayout(this).apply { visibility = View.GONE }
+        scrim = View(this).apply { setBackgroundColor(0xAA000000.toInt()); setOnClickListener { closeDrawer() } }
+        drawerRoot.addView(scrim, FrameLayout.LayoutParams(MATCH, MATCH))
+        panelW = (resources.displayMetrics.widthPixels * 0.84f).toInt()
+        panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xF2111114.toInt()); setPadding(dp(18), dp(44), dp(18), dp(18)); isClickable = true }
+        drawerRoot.addView(panel, FrameLayout.LayoutParams(panelW, MATCH))
+
+        panel.addView(ImageView(this).apply { setImageResource(R.drawable.omen_wordmark); setColorFilter(0xFFE6ECFF.toInt()); adjustViewBounds = true }, lp(dp(120), WRAP).apply { bottomMargin = dp(18) })
+        fun nav(res: Int, label: String, f: () -> Unit) = panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), dp(14), dp(6), dp(14)); isClickable = true
+            addView(ImageView(context).apply { setImageDrawable(icon(res, MUT)) }, lp(dp(26), dp(26)))
+            addView(TextView(context).apply { text = label; textSize = 19f; setTextColor(0xFFD9D6CF.toInt()) }, lp(WRAP, WRAP).apply { marginStart = dp(18) })
+            setOnClickListener { f() }
+        })
+        nav(R.drawable.ic_chat, "Chats") { closeDrawer() }
+        nav(R.drawable.ic_file, "Notes") { closeDrawer(); ChatLog.add(this, true, "read my notes"); render(); send("read my notes", false) }
+        nav(R.drawable.ic_attach, "Share a file") { closeDrawer(); pickDocument() }
+        nav(R.drawable.ic_gear, "Settings") { closeDrawer(); startActivity(Intent(this, SettingsActivity::class.java)) }
+        panel.addView(View(this).apply { setBackgroundColor(0x22FFFFFF) }, lp(MATCH, dp(1)).apply { topMargin = dp(10); bottomMargin = dp(14) })
+        panel.addView(TextView(this).apply { text = "Recents"; textSize = 16f; setTextColor(MUT); setPadding(dp(6), 0, 0, dp(6)) })
+        histEmpty = TextView(this).apply { text = "Nothing here yet."; textSize = 15f; setTextColor(0xFF6E6E76.toInt()); setPadding(dp(6), dp(8), 0, 0) }
+        panel.addView(histEmpty)
+        histList = ListView(this).apply { divider = null; dividerHeight = 0; isVerticalScrollBarEnabled = false; setSelector(ColorDrawable(0x22FFFFFF)) }
+        panel.addView(histList, lp(MATCH, 0).apply { weight = 1f })
+
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, 0) }
+        val initials = (prefs.getString("name", "") ?: "").trim().split(" ").filter { it.isNotEmpty() }.take(2).joinToString("") { it.take(1).uppercase() }.ifEmpty { "OM" }
+        bottom.addView(TextView(this).apply {
+            text = initials; textSize = 18f; setTextColor(INK); gravity = Gravity.CENTER; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = circle(ACC, ACC); isClickable = true
+            setOnClickListener { closeDrawer(); startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+        }, lp(dp(56), dp(56)))
+        bottom.addView(View(this), lp(0, 1).apply { weight = 1f })
+        bottom.addView(TextView(this).apply {
+            text = "＋  New chat"; textSize = 18f; setTextColor(INK); gravity = Gravity.CENTER; setPadding(dp(26), dp(15), dp(26), dp(15))
+            background = pill(0xFFF3F1EC.toInt(), 0xFFF3F1EC.toInt(), 30); isClickable = true
+            setOnClickListener { ChatLog.clear(this@MainActivity); render(); closeDrawer() }
+        }, lp(WRAP, WRAP))
+        panel.addView(bottom)
+        root.addView(drawerRoot, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    private fun refreshHistory() {
+        val h = QueryHistory.all(this)
+        histEmpty.visibility = if (h.isEmpty()) View.VISIBLE else View.GONE
+        histList.adapter = object : BaseAdapter() {
+            override fun getCount() = h.size
+            override fun getItem(position: Int): Any = h[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), dp(13), dp(6), dp(13))
+                addView(ImageView(context).apply { setImageDrawable(icon(R.drawable.ic_chat, 0xFF8A8A92.toInt())) }, lp(dp(22), dp(22)))
+                addView(TextView(context).apply { text = h[position]; textSize = 17f; setTextColor(TXT); maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
+                    lp(0, WRAP).apply { weight = 1f; marginStart = dp(16) })
+            }
+        }
+        histList.setOnItemClickListener { _, _, pos, _ -> input.setText(h[pos]); input.setSelection(input.text.length); closeDrawer() }
+    }
+
+    private fun openDrawer() {
+        refreshHistory(); drawerRoot.visibility = View.VISIBLE
+        scrim.alpha = 0f; scrim.animate().alpha(1f).setDuration(180).start()
+        panel.translationX = -panelW.toFloat(); panel.animate().translationX(0f).setDuration(220).start()
+    }
+    private fun closeDrawer() {
+        scrim.animate().alpha(0f).setDuration(160).start()
+        panel.animate().translationX(-panelW.toFloat()).setDuration(180).withEndAction { drawerRoot.visibility = View.GONE }.start()
+    }
+
+    // ---------- "+" pop-up (all the extra tools live here) ----------
+    private fun showPlus(anchor: View) {
+        val items = listOf<Triple<Int, String, () -> Unit>>(
+            Triple(R.drawable.ic_photo, "Photos", { pickPhoto() }),
+            Triple(R.drawable.ic_attach, "Files and documents", { pickDocument() }),
+            Triple(R.drawable.ic_search, "Web search: " + (if (webMode) "ON" else "OFF"), { setWebMode(!webMode) }),
+            Triple(if (prefs.getBoolean("voice", true)) R.drawable.ic_vol_on else R.drawable.ic_vol_off, "Spoken replies: " + (if (prefs.getBoolean("voice", true)) "ON" else "OFF"),
+                { prefs.edit().putBoolean("voice", !prefs.getBoolean("voice", true)).apply() }),
+            Triple(R.drawable.ic_photo, "Create an image", { input.setText("Create an image of "); input.setSelection(input.text.length); input.requestFocus() })
+        )
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = pill(0xFF242428.toInt(), 0x33FFFFFF, 22); setPadding(dp(6), dp(8), dp(6), dp(8)) }
+        val pw = PopupWindow(box, WRAP, WRAP, true)
+        pw.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); pw.elevation = dp(8).toFloat()
+        for (item in items) {
+            val action = item.third
+            box.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(13), dp(22), dp(13)); isClickable = true
+                addView(ImageView(context).apply { setImageDrawable(icon(item.first, TXT)) }, lp(dp(24), dp(24)))
+                addView(TextView(context).apply { text = item.second; textSize = 17f; setTextColor(TXT) }, lp(WRAP, WRAP).apply { marginStart = dp(16) })
+                setOnClickListener { pw.dismiss(); action() }
+            })
+        }
+        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        pw.showAsDropDown(anchor, 0, -(anchor.height + box.measuredHeight + dp(10)))
+    }
+
+    private fun setWebMode(on: Boolean) {
+        webMode = on
+        modeChip.text = if (on) "Web search" else "Chat"
+        modeChip.setTextColor(if (on) ACC else TXT)
+        modeChip.background = pill(if (on) 0xFF2F3550.toInt() else 0xFF2C2C30.toInt(), if (on) ACC else 0x22FFFFFF, 22)
+    }
+
+    private fun hasContent() = input.text.toString().isNotBlank() || pendingImages.isNotEmpty() || pendingDocs.isNotEmpty()
+    private fun updateAction() {
+        actionBtn.setImageResource(if (hasContent()) R.drawable.ic_send else R.drawable.ic_wave)
+        actionBtn.contentDescription = if (hasContent()) "Send" else "Talk"
+    }
+
+    // ---------- images and documents ----------
     private fun decode(path: String, max: Int): Bitmap? {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(path, o)
@@ -214,7 +334,6 @@ class MainActivity : Activity() {
     }
 
     private fun saveToGallery(path: String) {
-        if (Build.VERSION.SDK_INT < 29) { toast("Saving needs Android 10 or newer"); return }
         try {
             val v = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, "OMEN_${System.currentTimeMillis()}.jpg")
@@ -224,29 +343,6 @@ class MainActivity : Activity() {
             contentResolver.openOutputStream(uri)?.use { out -> File(path).inputStream().use { it.copyTo(out) } }
             toast("Saved to Pictures/OMEN")
         } catch (e: Exception) { toast("Could not save the image") }
-    }
-
-    private fun showAccess() {
-        fun ok(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
-        val pm = getSystemService(PowerManager::class.java)
-        val ask = { requestPermissions(perms, 1) }
-        val items = listOf<Triple<String, Boolean, () -> Unit>>(
-            Triple("Microphone", ok(Manifest.permission.RECORD_AUDIO), ask),
-            Triple("Phone: place and answer calls", ok(Manifest.permission.CALL_PHONE) && ok(Manifest.permission.ANSWER_PHONE_CALLS) && ok(Manifest.permission.READ_PHONE_STATE), ask),
-            Triple("Contacts", ok(Manifest.permission.READ_CONTACTS), ask),
-            Triple("Call log (caller names)", ok(Manifest.permission.READ_CALL_LOG), ask),
-            Triple("SMS", ok(Manifest.permission.SEND_SMS), ask),
-            Triple("Notifications", Build.VERSION.SDK_INT < 33 || ok(Manifest.permission.POST_NOTIFICATIONS), ask),
-            Triple("Display over apps (Clock alarms, open apps)", Settings.canDrawOverlays(this), { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }),
-            Triple("WhatsApp auto-send (Accessibility)", OmenAccess.alive, { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }),
-            Triple("Battery: unrestricted background use", pm.isIgnoringBatteryOptimizations(packageName), { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) })
-        )
-        val lv = ListView(this)
-        lv.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, items.map { (if (it.second) "✔  " else "✖  ") + it.first + (if (it.second) "" else "  (tap to allow)") })
-        val dlg = AlertDialog.Builder(this).setTitle("OMEN access").setView(lv)
-            .setPositiveButton("Allow all permissions") { _, _ -> requestPermissions(perms, 1) }.setNegativeButton("Close", null).create()
-        lv.setOnItemClickListener { _, _, pos, _ -> if (!items[pos].second) { items[pos].third(); dlg.dismiss() } }
-        dlg.show()
     }
 
     private fun thumb(path: String, sizeDp: Int) = ImageView(this).apply {
@@ -279,14 +375,66 @@ class MainActivity : Activity() {
         } catch (e: Exception) { toast("No gallery app found") }
     }
 
-    private fun updatePreview() {
-        if (pendingImages.isEmpty()) { previewBox.visibility = View.GONE; return }
-        previewBox.visibility = View.VISIBLE
-        previewImg.setImageBitmap(decode(pendingImages.last().path, dp(112)))
-        previewLabel.text = (if (pendingImages.size == 1) "1 photo attached" else "${pendingImages.size} pages attached") + ". Tap an action or ask your own question."
+    private fun pickDocument() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE)
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf", "text/*", "application/json",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation", "image/*")), 80)
+        } catch (e: Exception) { toast("No file manager found") }
     }
 
-    private fun clearPhoto() { pendingImages.clear(); updatePreview() }
+    /** Photos go to the notes scanner, everything else is read as a document. Works for picker and for "Share to OMEN". */
+    private fun addUris(uris: List<Uri>) {
+        toast("Reading…")
+        Thread {
+            var failed = ""
+            for (u in uris.take(6)) {
+                try {
+                    val mime = contentResolver.getType(u) ?: ""
+                    if (mime.startsWith("image/")) {
+                        if (pendingImages.size < 5) { val f = savePhoto(u); runOnUiThread { pendingImages.add(f); updatePreview() } }
+                    } else {
+                        val d = DocReader.read(this, u); runOnUiThread { pendingDocs.add(d); updatePreview() }
+                    }
+                } catch (e: Exception) { failed = e.message ?: "unreadable file" }
+            }
+            if (failed.isNotEmpty()) runOnUiThread { toast(failed) }
+        }.start()
+    }
+
+    private fun act(label: String, mode: String) = TextView(this).apply {
+        text = label; textSize = 13f; setTextColor(ACC); setPadding(dp(14), dp(8), dp(14), dp(8))
+        background = pill(0x33000000, ACC, 18); isClickable = true
+        setOnClickListener { sendAttachments(mode, input.text.toString().trim()) }
+    }
+
+    private fun updatePreview() {
+        attachRow.removeAllViews(); chipRow.removeAllViews()
+        if (pendingImages.isEmpty() && pendingDocs.isEmpty()) { previewBox.visibility = View.GONE; updateAction(); return }
+        previewBox.visibility = View.VISIBLE
+        pendingImages.forEach { f ->
+            attachRow.addView(ImageView(this).apply {
+                setImageBitmap(decode(f.path, dp(112))); scaleType = ImageView.ScaleType.CENTER_CROP
+                background = pill(0xFF10121F.toInt(), ACC, 12); clipToOutline = true
+            }, lp(dp(56), dp(56)).apply { marginEnd = dp(8) })
+        }
+        pendingDocs.forEach { d ->
+            attachRow.addView(TextView(this).apply {
+                text = d.first; textSize = 13f; setTextColor(TXT); maxLines = 1; ellipsize = TextUtils.TruncateAt.END; maxWidth = dp(170)
+                compoundDrawablePadding = dp(8); setCompoundDrawablesWithIntrinsicBounds(icon(R.drawable.ic_file, ACC), null, null, null)
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(14), 0); background = pill(0xFF2C2C30.toInt(), 0x22FFFFFF, 20)
+            }, lp(WRAP, dp(40)).apply { marginEnd = dp(8) })
+        }
+        attachRow.addView(circleBtn(R.drawable.ic_close, "Remove all") { clearAttachments() }, lp(dp(34), dp(34)))
+        val labels = if (pendingImages.isNotEmpty()) listOf("Read text" to "read", "Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz")
+                     else listOf("Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz")
+        for ((l, md) in labels) chipRow.addView(act(l, md), lp(WRAP, WRAP).apply { marginEnd = dp(8) })
+        updateAction()
+    }
+
+    private fun clearAttachments() { pendingImages.clear(); pendingDocs.clear(); updatePreview() }
 
     private fun notesPrompt(mode: String, typed: String): String {
         val base = "These are photos of the user's notes (handwritten or printed). Read them carefully and in order. Use plain text only: no markdown, no asterisks; use simple dashes and numbers. "
@@ -300,14 +448,32 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun docPrompt(mode: String, typed: String): String = when (mode) {
+        "key" -> "List the key terms with short definitions, and the important facts, dates and numbers. Then give 3 likely exam questions."
+        "quiz" -> "Create 6 quiz questions from this document (mix of short answer and multiple choice), each followed by a brief answer."
+        "custom" -> typed
+        else -> "Summarize this document: first a one-line topic, then the main points as short dashed lines, then any dates, numbers, names or action items."
+    }
+
+    private fun sendAttachments(mode: String, typed: String) {
+        if (pendingImages.isNotEmpty()) sendPhotos(if (mode == "default" && typed.isNotEmpty()) "custom" else mode, typed) else sendDocs(mode, typed)
+    }
+
+    private fun speakIfShort(ans: String) {
+        if (OmenService.running && prefs.getBoolean("voice", true) && ans.length <= 500) {
+            try { startService(Intent(this, OmenService::class.java).putExtra("say", ans)) } catch (e: Exception) {}
+        }
+    }
+
     private fun sendPhotos(mode: String, typed: String) {
         val key = prefs.getString("key", "") ?: ""
-        if (key.isBlank()) { toast("Add your Groq key in SETUP first"); return }
-        val files = pendingImages.toList()
+        if (key.isBlank()) { toast("Add your Groq key in Settings first"); return }
+        val files = pendingImages.toList(); val docs = pendingDocs.toList()
         if (files.isEmpty()) return
-        val prompt = notesPrompt(mode, typed)
+        val extra = if (docs.isEmpty()) "" else "\n\nAlso use this attached document text:\n" + docs.joinToString("\n\n") { it.first + ":\n" + it.second }.take(8000)
+        val prompt = notesPrompt(mode, typed) + extra
         val label = when (mode) { "read" -> "Read text"; "summary" -> "Summarize"; "key" -> "Key points"; "quiz" -> "Quiz me"; "custom" -> typed; else -> "Read and summarize" }
-        clearPhoto(); input.setText("")
+        clearAttachments(); input.setText("")
         val head = if (files.size == 1) "IMG:${files[0].path}" else "GAL:" + files.joinToString("|") { it.path }
         ChatLog.add(this, true, "\u0001$head\u0001$label"); render()
         view.state = "thinking"; status.text = "THINKING"
@@ -317,13 +483,28 @@ class MainActivity : Activity() {
             }
             ChatLog.add(this, false, ans)
             runOnUiThread { view.state = "idle"; status.text = stateLabel(); render() }
-            if (OmenService.running && prefs.getBoolean("voice", true) && ans.length <= 500) {
-                try { startService(Intent(this, OmenService::class.java).putExtra("say", ans)) } catch (e: Exception) {}
-            }
+            speakIfShort(ans)
         }.start()
     }
 
-    /** No vision model on the Groq key: read the text on this phone, then let the chat model analyse it. */
+    private fun sendDocs(mode: String, typed: String) {
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) { toast("Add your Groq key in Settings first"); return }
+        val docs = pendingDocs.toList()
+        if (docs.isEmpty()) return
+        val prompt = docPrompt(if (mode == "default") "summary" else mode, typed)
+        val label = when (mode) { "key" -> "Key points"; "quiz" -> "Quiz me"; "custom" -> typed; else -> "Summarize" }
+        clearAttachments(); input.setText("")
+        ChatLog.add(this, true, "\u0001DOC:" + docs.joinToString(", ") { it.first } + "\u0001$label"); render()
+        view.state = "thinking"; status.text = "THINKING"
+        Thread {
+            val ans = try { Brain.askDocument(key, docs, prompt) } catch (e: Exception) { "Document analysis failed: ${e.message}" }
+            ChatLog.add(this, false, ans)
+            runOnUiThread { view.state = "idle"; status.text = stateLabel(); render() }
+            speakIfShort(ans)
+        }.start()
+    }
+
     private fun ocrFallback(key: String, files: List<File>, mode: String, prompt: String): String {
         val text = files.mapIndexed { i, f -> (if (files.size > 1) "--- page ${i + 1} ---\n" else "") + Ocr.read(f.path) }.joinToString("\n\n").trim()
         if (text.isBlank()) return "I could not find any readable text in the photo."
@@ -331,7 +512,7 @@ class MainActivity : Activity() {
         return Brain.notesFromText(key, text, prompt) + "\n\n(based on offline OCR text)"
     }
 
-    // ---------- chat ----------
+    // ---------- chat bubbles (glass) ----------
     private fun glassFill(user: Boolean): Int {
         val a = (prefs.getInt("glass", 28) * 255 / 100).coerceIn(0, 255)
         return if (user) Color.argb((a + 25).coerceAtMost(255), 34, 40, 69) else Color.argb(a, 16, 18, 31)
@@ -345,8 +526,7 @@ class MainActivity : Activity() {
         setPadding(dp(14), dp(10), dp(14), dp(10))
         maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()
         background = pill(glassFill(user), glassStroke(user), 18)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
+        layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
     }
 
     private fun bubbleView(t: String, user: Boolean): View {
@@ -357,17 +537,22 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8))
             background = pill(glassFill(user), glassStroke(user), 18)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = if (user) Gravity.END else Gravity.START; topMargin = dp(6) }
         }
-        if (head.startsWith("IMG:")) {
-            if (paths.isNotEmpty()) box.addView(thumb(paths[0], 220))
-        } else {
-            val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
-            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            paths.forEach { r.addView(thumb(it, 150)) }
-            hs.addView(r)
-            box.addView(hs, LinearLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.78).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT))
+        when {
+            head.startsWith("IMG:") -> if (paths.isNotEmpty()) box.addView(thumb(paths[0], 220))
+            head.startsWith("DOC:") -> box.addView(TextView(this).apply {
+                text = head.removePrefix("DOC:"); textSize = 14f; setTextColor(TXT); maxLines = 2; ellipsize = TextUtils.TruncateAt.END; maxWidth = dp(240)
+                compoundDrawablePadding = dp(10); setCompoundDrawablesWithIntrinsicBounds(icon(R.drawable.ic_file, ACC), null, null, null)
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(6), dp(10), dp(6))
+            })
+            else -> {
+                val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+                val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                paths.forEach { r.addView(thumb(it, 150)) }
+                hs.addView(r)
+                box.addView(hs, lp((resources.displayMetrics.widthPixels * 0.78).toInt(), WRAP))
+            }
         }
         if (cap.isNotBlank()) box.addView(TextView(this).apply { text = cap; textSize = 14f; setTextColor(TXT); setPadding(dp(4), dp(6), dp(4), 0) })
         return box
@@ -378,19 +563,20 @@ class MainActivity : Activity() {
         renderedVersion = ChatLog.version
         chat.removeAllViews()
         val items = ChatLog.all(this)
-        if (items.isEmpty()) chat.addView(bubble("Ask me anything. 📷 add a photo, ask \"show pictures of…\", use the mic, or say \"Omen\" after you awaken me.", false))
+        if (items.isEmpty()) chat.addView(bubble("Say “Hey Omen” from any app once I am awake, or type below. Tap + for photos, files and more.", false))
         items.forEach { chat.addView(bubbleView(it.second, it.first)) }
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun refresh() {
-        btn.awake = OmenService.running
+        power.awake = OmenService.running
         if (view.state == "idle") status.text = stateLabel()
     }
 
+    // ---------- sending ----------
     private fun submit() {
         val t = input.text.toString().trim()
-        if (pendingImages.isNotEmpty()) { sendPhotos(if (t.isEmpty()) "default" else "custom", t); return }
+        if (pendingImages.isNotEmpty() || pendingDocs.isNotEmpty()) { sendAttachments(if (t.isEmpty()) "default" else "custom", t); return }
         if (t.isEmpty()) return
         input.setText("")
         ChatLog.add(this, true, t); render()
@@ -405,45 +591,44 @@ class MainActivity : Activity() {
         view.state = "thinking"; status.text = "THINKING"
     }
 
-    private fun startVoice() {
-        if (OmenService.running) startService(Intent(this, OmenService::class.java).putExtra("pause", true))
-        try {
-            startActivityForResult(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-                .putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to OMEN"), 77)
-        } catch (e: Exception) {
-            Toast.makeText(this, "No speech service found. Install the Google app.", Toast.LENGTH_LONG).show()
-            if (OmenService.running) startService(Intent(this, OmenService::class.java).putExtra("resume", true))
-        }
+    private fun pauseService() { if (OmenService.running) startService(Intent(this, OmenService::class.java).putExtra("pause", true)) }
+    private fun resumeService() { if (OmenService.running) startService(Intent(this, OmenService::class.java).putExtra("resume", true)) }
+
+    private fun speechIntent(prompt: String) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN").putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+
+    private fun startVoice() = listenFor(77, "Speak to OMEN")
+    private fun startDictation() = listenFor(79, "Dictate your message")
+    private fun listenFor(code: Int, prompt: String) {
+        pauseService()
+        try { startActivityForResult(speechIntent(prompt), code) }
+        catch (e: Exception) { Toast.makeText(this, "No speech service found. Install the Google app.", Toast.LENGTH_LONG).show(); resumeService() }
     }
 
     override fun onActivityResult(rc: Int, res: Int, d: Intent?) {
         super.onActivityResult(rc, res, d)
-        if (rc == 78) {
-            val uris = mutableListOf<Uri>()
-            d?.clipData?.let { cd -> for (n in 0 until cd.itemCount) uris.add(cd.getItemAt(n).uri) }
-            if (uris.isEmpty()) d?.data?.let { uris.add(it) }
-            if (res == RESULT_OK && uris.isNotEmpty()) {
-                Thread {
-                    var failed = 0
-                    for (u in uris.take(maxOf(0, 5 - pendingImages.size))) {
-                        try { val f = savePhoto(u); runOnUiThread { pendingImages.add(f); updatePreview(); input.requestFocus() } }
-                        catch (e: Exception) { failed++ }
-                    }
-                    if (failed > 0) runOnUiThread { toast("Could not read $failed image(s)") }
-                }.start()
+        when (rc) {
+            77, 79 -> {
+                resumeService()
+                val t = d?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+                if (res == RESULT_OK && !t.isNullOrBlank()) {
+                    if (rc == 79) { input.setText((input.text.toString() + " " + t).trim()); input.setSelection(input.text.length) }
+                    else { ChatLog.add(this, true, t); render(); send(t, webMode, true) }
+                }
             }
-            return
+            78, 80 -> {
+                val uris = mutableListOf<Uri>()
+                d?.clipData?.let { cd -> for (n in 0 until cd.itemCount) uris.add(cd.getItemAt(n).uri) }
+                if (uris.isEmpty()) d?.data?.let { uris.add(it) }
+                if (res == RESULT_OK && uris.isNotEmpty()) addUris(uris)
+            }
         }
-        if (rc != 77) return
-        if (OmenService.running) startService(Intent(this, OmenService::class.java).putExtra("resume", true))
-        val t = d?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (res == RESULT_OK && !t.isNullOrBlank()) { ChatLog.add(this, true, t); render(); send(t, webMode, true) }
     }
 
+    // ---------- awaken / permissions ----------
     private fun toggle() {
-        if (OmenService.running) { stopService(Intent(this, OmenService::class.java)); view.state = "idle"; refresh(); status.text = "DORMANT"; return }
+        if (OmenService.running) { stopService(Intent(this, OmenService::class.java)); view.state = "idle"; power.awake = false; status.text = "DORMANT"; return }
         if (perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) start() else requestPermissions(perms, 1)
     }
 
@@ -456,67 +641,33 @@ class MainActivity : Activity() {
     }
 
     private fun start() {
+        if (!WakeModel.ready(this) && !prefs.getBoolean("wakeAsked", false)) {
+            prefs.edit().putBoolean("wakeAsked", true).apply()
+            AlertDialog.Builder(this).setTitle("Offline “Hey Omen”")
+                .setMessage("Download a small speech model (about 40 MB) so OMEN hears “Hey Omen” reliably from any app, even offline? You can also do this later in Settings.")
+                .setPositiveButton("Download") { _, _ -> reallyStart(); downloadWakeModel() }
+                .setNegativeButton("Later") { _, _ -> reallyStart() }.show()
+            return
+        }
+        reallyStart()
+    }
+
+    private fun reallyStart() {
         ContextCompat.startForegroundService(this, Intent(this, OmenService::class.java))
-        if (!Settings.canDrawOverlays(this)) Toast.makeText(this, "Open SETUP and allow 'display over apps' so I can use your Clock and open apps by voice.", Toast.LENGTH_LONG).show()
+        if (!Settings.canDrawOverlays(this)) Toast.makeText(this, "Open Settings and allow “display over apps” so “Hey Omen” can pop up over other apps.", Toast.LENGTH_LONG).show()
         refresh()
     }
 
-    private fun showHistory() {
-        val h = QueryHistory.all(this)
-        if (h.isEmpty()) { toast("No history yet"); return }
-        val lv = ListView(this)
-        lv.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, h)
-        val dlg = AlertDialog.Builder(this).setTitle("History").setView(lv)
-            .setNegativeButton("Close", null).setNeutralButton("Clear history") { _, _ -> QueryHistory.clear(this); toast("History cleared") }.create()
-        lv.setOnItemClickListener { _, _, pos, _ -> input.setText(h[pos]); input.setSelection(input.text.length); dlg.dismiss() }
-        dlg.show()
-    }
-
-    private fun setup() {
-        val lay = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), 0) }
-        val key = EditText(this).apply { hint = "Groq API key (gsk_...)"; setText(prefs.getString("key", "")); isSingleLine = true }
-        lay.addView(key)
-        fun b(t: String, f: () -> Unit) = lay.addView(Button(this).apply { text = t; setOnClickListener { f() } })
-        b("Save and test key") {
-            val k = key.text.toString().trim(); prefs.edit().putString("key", k).apply()
-            Brain.bad.clear(); Brain.models = emptyList(); Brain.brain = ""
-            Thread {
-                try { Brain.load(k); runOnUiThread { Toast.makeText(this, "Connected. Brain: ${Brain.brain}. Search: ${Brain.web.ifEmpty { "not on this account" }}", Toast.LENGTH_LONG).show() } }
-                catch (e: Exception) { runOnUiThread { Toast.makeText(this, "Key problem: ${e.message}", Toast.LENGTH_LONG).show() } }
-            }.start()
-        }
-        lay.addView(Button(this).apply {
-            fun lbl() = "Wake word \"Omen\" required: " + (if (prefs.getBoolean("wake", true)) "ON" else "OFF (answers everything it hears)")
-            text = lbl()
-            setOnClickListener { prefs.edit().putBoolean("wake", !prefs.getBoolean("wake", true)).apply(); text = lbl() }
-        })
-        lay.addView(Button(this).apply {
-            fun lbl() = "Smart wake (run clear commands without Omen): " + (if (prefs.getBoolean("smart", true)) "ON" else "OFF")
-            text = lbl()
-            setOnClickListener { prefs.edit().putBoolean("smart", !prefs.getBoolean("smart", true)).apply(); text = lbl() }
-        })
-        b("Check all permissions and access") { showAccess() }
-        lay.addView(TextView(this).apply { text = "Chat bubble opacity (lower = more transparent, Omen's face shows through)"; textSize = 12f; setPadding(0, dp(10), 0, 0) })
-        lay.addView(SeekBar(this).apply {
-            max = 80; progress = prefs.getInt("glass", 28)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { prefs.edit().putInt("glass", p).apply(); renderedVersion = -1; render() }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
-            })
-        })
-        lay.addView(Button(this).apply {
-            fun lbl() = "Animated wind background: " + (if (prefs.getBoolean("wind", true)) "ON" else "OFF (saves battery)")
-            text = lbl()
-            setOnClickListener {
-                val on = !prefs.getBoolean("wind", true); prefs.edit().putBoolean("wind", on).apply()
-                if (on) { wind.wanted = true; wind.playNow() } else { wind.stopForGood(); view.transparentBg = false }
-                text = lbl()
-            }
-        })
-        b("1. Allow display over apps (Clock alarms + open apps by voice)") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
-        b("2. Enable WhatsApp auto-send (optional)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        b("3. Allow background use (battery)") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-        AlertDialog.Builder(this).setTitle("OMEN setup").setView(lay).setPositiveButton("Close", null).show()
+    private fun downloadWakeModel() {
+        Thread {
+            try {
+                WakeModel.download(this) { p -> runOnUiThread { status.text = "DOWNLOADING WAKE MODEL $p%" } }
+                runOnUiThread {
+                    toast("“Hey Omen” model ready"); status.text = stateLabel()
+                    stopService(Intent(this, OmenService::class.java))
+                    ContextCompat.startForegroundService(this, Intent(this, OmenService::class.java))
+                }
+            } catch (e: Exception) { runOnUiThread { toast("Download failed: ${e.message}"); status.text = stateLabel() } }
+        }.start()
     }
 }

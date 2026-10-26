@@ -36,6 +36,9 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private var ringing = false
     private var callerNumber: String? = null
     private var engagedUntil = 0L
+    private var commandWindowUntil = 0L
+    private var wakeEngine: WakeEngine? = null
+    private var wakeBroken = false
     private var ttsReady = false
     private var paused = false
     private var typedMode = false
@@ -51,7 +54,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     override fun onBind(i: Intent?): IBinder? = null
     override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
         if (i?.getBooleanExtra("pause", false) == true) {
-            paused = true; main.post { rec?.destroy(); rec = null }
+            paused = true; wakeEngine?.stop(); main.post { rec?.destroy(); rec = null }
             main.postDelayed({ if (paused) { paused = false; listen() } }, 25000)
         }
         if (i?.getBooleanExtra("resume", false) == true) { paused = false; listen() }
@@ -83,7 +86,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         overlay = OverlayUi(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("omen", "OMEN", NotificationManager.IMPORTANCE_LOW))
         val n = NotificationCompat.Builder(this, "omen").setContentTitle("OMEN is watching from the shadows")
-            .setContentText("Say \"Omen\" followed by a command").setSmallIcon(android.R.drawable.ic_btn_speak_now).setOngoing(true).build()
+            .setContentText("Say \"Hey Omen\" from any app").setSmallIcon(android.R.drawable.ic_btn_speak_now).setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= 30) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) else startForeground(1, n)
         tts = TextToSpeech(this, this)
         main.postDelayed(watchdog, 15000)
@@ -98,7 +101,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         if (v != null) tts.voice = v
         tts.setPitch(0.45f); tts.setSpeechRate(0.82f)
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(id: String?) { speaking = true; main.post { rec?.cancel() } }
+            override fun onStart(id: String?) { speaking = true; wakeEngine?.stop(); main.post { rec?.cancel() } }
             override fun onDone(id: String?) { speaking = false; ui("idle"); main.postDelayed({ listen() }, 300) }
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) { speaking = false; main.post { listen() } }
@@ -127,6 +130,12 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private val doListen = Runnable {
         if (!alive || speaking || paused) return@Runnable
         lastCb = System.currentTimeMillis()
+        val nowMs = System.currentTimeMillis()
+        if (wakeMode() && nowMs > commandWindowUntil && nowMs > engagedUntil && nowMs >= awaitUntil) {
+            rec?.destroy(); rec = null
+            startWake(); return@Runnable
+        }
+        wakeEngine?.stop()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             ui("listening", heard = "no speech service. install the Google app")
             main.postDelayed({ listen() }, 6000); return@Runnable
@@ -173,6 +182,21 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
 
     private fun listen() { main.removeCallbacks(doListen); main.post(doListen) }
 
+    private fun wakeMode() = !wakeBroken && prefs.getBoolean("hwake", true) && WakeModel.ready(this)
+
+    private fun startWake() {
+        if (wakeEngine == null) wakeEngine = WakeEngine(this, { main.post { onWakeDetected() } }, { main.post { wakeBroken = true; listen() } })
+        main.postDelayed({ if (alive && !speaking && !paused) wakeEngine?.start() }, 250)
+    }
+
+    /** "Hey Omen" heard (offline detector): pop up over whatever app is open, greet, then listen for the command. */
+    private fun onWakeDetected() {
+        val now = System.currentTimeMillis()
+        commandWindowUntil = now + 10000; awaitUntil = now + 12000
+        activate()
+        say("What can I do for you, sir?", false)
+    }
+
     // restarts the microphone if the recogniser silently dies
     private val watchdog = object : Runnable {
         override fun run() {
@@ -190,7 +214,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
                     i.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)?.let { callerNumber = it }
                     if (!ringing) {
                         ringing = true
-                        main.postDelayed({ if (ringing) say("Incoming call from ${nameFor(callerNumber)}. Say answer, or decline.") }, 1200)
+                        main.postDelayed({ if (ringing) { commandWindowUntil = System.currentTimeMillis() + 40000; say("Incoming call from ${nameFor(callerNumber)}. Say answer, or decline.") } }, 1200)
                     }
                 }
                 else -> { ringing = false; callerNumber = null }
@@ -411,6 +435,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         running = false; alive = false
         try { overlay.hide() } catch (e: Exception) {}
+        try { wakeEngine?.close() } catch (e: Throwable) {}
         rec?.destroy(); tts.shutdown()
         try { unregisterReceiver(phone) } catch (e: Exception) {}
         ui("idle", reply = "Back in the shadows.")

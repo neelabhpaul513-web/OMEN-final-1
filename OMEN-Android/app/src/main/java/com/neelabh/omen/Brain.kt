@@ -103,6 +103,15 @@ object Brain {
         return cleanNotes(txt(http("POST", "/chat/completions", key, b).getJSONArray("choices").getJSONObject(0).getJSONObject("message")))
     }
 
+    /** Answer a request about documents the user shared (text already extracted on the phone). */
+    fun askDocument(key: String, docs: List<Pair<String, String>>, task: String): String {
+        val per = 24000 / maxOf(1, docs.size)
+        val body = docs.joinToString("\n\n") { "FILE: ${it.first}\n<<<\n${it.second.take(per)}\n>>>" }
+        val msgs = JSONArray().put(JSONObject().put("role", "user").put("content",
+            "The user shared these documents:\n$body\n\nRequest: $task\nUse plain text only: no markdown, no asterisks; simple dashes and numbers."))
+        return cleanNotes(txt(chat(key, msgs, null, 1500)))
+    }
+
     /** Text-only fallback: analyse notes that were read by offline OCR. */
     fun notesFromText(key: String, ocr: String, task: String): String {
         val msgs = JSONArray().put(JSONObject().put("role", "user").put("content",

@@ -58,3 +58,8 @@ V11: HEY OMEN from anywhere (floating glass panel with Omen's face over any app;
  New voice/phone controls: flashlight, volume, media play/pause/next, notes, navigate, play on YouTube/Spotify, wifi/bluetooth settings, time/date/battery.
  Chat is now transparent glass (slider in SETUP) so Omen's face shows through. Background = black wind waves video, 1440x2560 (2K), looping; toggle in SETUP.
  After a phone restart a notification appears: tap it to awaken OMEN again.
+
+V12: NEW LAYOUT (Claude-style). Menu (top-left) opens a side drawer: Chats, Notes, Share a file, Settings, Recents history, avatar and New chat.
+ Awaken button is the round power button at the top-right. Chat box is a single card: + (photos, files, web search, spoken replies, create image), mode chip, mic (dictate), waveform/send.
+ All settings are on their own Settings screen. Share any PDF, Word, PowerPoint, text or photo to OMEN from another app (Share > OMEN) or use + > Files.
+ HEY OMEN: now uses an offline detector (Vosk). First time you awaken OMEN it offers a ~40 MB model download. Then say "Hey Omen" in any app.
