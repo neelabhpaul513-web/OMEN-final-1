@@ -38,13 +38,17 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private var engagedUntil = 0L
     private var commandWindowUntil = 0L
     private var wakeEngine: WakeEngine? = null
-    private var wakeBroken = false
+    private var wakeBlockedUntil = 0L
+    private var wakeFails = 0
+    private var errStreak = 0
+    private var defaultLang = false
+    private var preferOffline = false
     private var ttsReady = false
     private var paused = false
     private var typedMode = false
     private val pending = mutableListOf<Pair<String, Boolean>>()
     private val history = mutableListOf<Pair<String, String>>()
-    private val wake = Regex("\\b(omen|oman|owen|ohmen|o men|oh men|amen|omin|omn|ommen|aumen|ooman|aman|amaan|ahmen|aaman|ohman)\\b")
+    private val wake = Regex("\\b(omen|oman|owen|ohmen|o men|oh men|amen|omin|omn|ommen|aumen|ooman|aman|amaan|ahmen|aaman|ohman|(?:hey|hi|ok|okay) (?:women|woman)|^(?:women|woman))\\b")
     private val cmdVerb = Regex("^(open|launch|call|dial|phone|set|search|look up|google|research|message|whatsapp|text|sms|timer|alarm|remind|show|play|pause|resume|next|skip|navigate|directions|flashlight|torch|volume|mute|unmute|note|take a note|read|generate|create|make|draw|imagine|goodbye|answer|decline|what|who|when|where|why|how|tell|weather|news|find)\\b")
     @Volatile private var lastCb = 0L
     private val numWords = mapOf("one" to "1", "two" to "2", "three" to "3", "four" to "4", "five" to "5", "six" to "6",
@@ -144,7 +148,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         rec = SpeechRecognizer.createSpeechRecognizer(this).also { r ->
             r.setRecognitionListener(object : RecognitionListener {
                 override fun onResults(b: Bundle?) {
-                    lastCb = System.currentTimeMillis()
+                    lastCb = System.currentTimeMillis(); errStreak = 0
                     val list = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val best = list?.firstOrNull { wake.containsMatchIn(it.lowercase()) } ?: list?.firstOrNull()
                     best?.let { handle(it) }
@@ -153,45 +157,55 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
                 override fun onError(e: Int) {
                     lastCb = System.currentTimeMillis()
                     val benign = e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
-                    if (!benign) ui("listening", heard = "mic error $e")
-                    val delay = when (e) {
-                        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 250L
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1500L
-                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER -> 2500L
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> 6000L
-                        else -> 700L
+                    if (benign) errStreak = 0 else errStreak++
+                    when (e) {
+                        12, 13 -> defaultLang = true   // language pack unavailable: use the phone's default language
+                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER -> preferOffline = true
                     }
+                    if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) ui("listening", heard = "mic permission missing. open Settings")
+                    else if (errStreak >= 4) ui("listening", heard = "mic problem (code $e), retrying")
+                    val delay = if (benign) 250L else if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) 6000L else minOf(5000L, 500L * (1 shl minOf(errStreak, 4)))
                     main.postDelayed({ listen() }, delay)
                 }
                 override fun onReadyForSpeech(p: Bundle?) { lastCb = System.currentTimeMillis(); if (!speaking) ui("listening") }
-                override fun onBeginningOfSpeech() { lastCb = System.currentTimeMillis() }
+                override fun onBeginningOfSpeech() { lastCb = System.currentTimeMillis(); errStreak = 0 }
                 override fun onRmsChanged(v: Float) {}
                 override fun onBufferReceived(b: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onPartialResults(b: Bundle?) {}
                 override fun onEvent(t: Int, b: Bundle?) {}
             })
-            r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            val go = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
                 .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
                 .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L))
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+            if (!defaultLang) go.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+            if (preferOffline) go.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            try { r.startListening(go) } catch (e: Exception) { errStreak++; main.postDelayed({ listen() }, 1500) }
         }
     }
 
     private fun listen() { main.removeCallbacks(doListen); main.post(doListen) }
 
-    private fun wakeMode() = !wakeBroken && prefs.getBoolean("hwake", true) && WakeModel.ready(this)
+    private fun wakeMode() = System.currentTimeMillis() >= wakeBlockedUntil && prefs.getBoolean("hwake", true) && WakeModel.ready(this)
+
+    private fun wakeFailed() {
+        wakeFails++
+        wakeBlockedUntil = System.currentTimeMillis() + (if (wakeFails < 3) 1500L else 60000L)
+        if (wakeFails >= 3) wakeFails = 0
+        listen()
+    }
 
     private fun startWake() {
-        if (wakeEngine == null) wakeEngine = WakeEngine(this, { main.post { onWakeDetected() } }, { main.post { wakeBroken = true; listen() } })
+        if (wakeEngine == null) wakeEngine = WakeEngine(this, { main.post { onWakeDetected() } }, { main.post { wakeFailed() } })
         main.postDelayed({ if (alive && !speaking && !paused) wakeEngine?.start() }, 250)
     }
 
     /** "Hey Omen" heard (offline detector): pop up over whatever app is open, greet, then listen for the command. */
     private fun onWakeDetected() {
         val now = System.currentTimeMillis()
+        wakeFails = 0; errStreak = 0
         commandWindowUntil = now + 10000; awaitUntil = now + 12000
         activate()
         say("What can I do for you, sir?", false)

@@ -77,7 +77,7 @@ class WakeEngine(private val c: Context, private val onWake: () -> Unit, private
         try {
             LibVosk.setLogLevel(LogLevel.WARNINGS)
             val m = model ?: Model(WakeModel.dir(c).path).also { model = it }
-            rec = Recognizer(m, 16000.0f, "[\"hey omen\", \"omen\", \"hey oman\", \"oman\", \"[unk]\"]")
+            rec = Recognizer(m, 16000.0f, "[\"hey omen\", \"omen\", \"hey oman\", \"oman\", \"hey women\", \"hey woman\", \"[unk]\"]")
             val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             ar = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 16000))
             if (ar.state != AudioRecord.STATE_INITIALIZED) throw Exception("mic busy")

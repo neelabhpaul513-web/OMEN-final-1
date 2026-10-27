@@ -63,3 +63,5 @@ V12: NEW LAYOUT (Claude-style). Menu (top-left) opens a side drawer: Chats, Note
  Awaken button is the round power button at the top-right. Chat box is a single card: + (photos, files, web search, spoken replies, create image), mode chip, mic (dictate), waveform/send.
  All settings are on their own Settings screen. Share any PDF, Word, PowerPoint, text or photo to OMEN from another app (Share > OMEN) or use + > Files.
  HEY OMEN: now uses an offline detector (Vosk). First time you awaken OMEN it offers a ~40 MB model download. Then say "Hey Omen" in any app.
+
+V12.1: added 'Hey Women' / 'Hey Woman' as wake phrases (the phone often mishears Omen). Mic errors now retry quietly with back-off, switch language/offline mode automatically, and the offline detector retries instead of giving up.
