@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>OMEN Admin panel</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0e0e11;color:#edebe6;font-family:Segoe UI,system-ui,sans-serif;display:flex;height:100vh}
+#nav{width:230px;background:#141417;border-right:1px solid #26262b;padding:18px 12px;display:flex;flex-direction:column;gap:4px}
+#nav img{width:110px;margin:4px 0 14px 8px}#nav .t{padding:11px 12px;border-radius:10px;cursor:pointer;color:#c9c6c0}#nav .t:hover{background:#1f1f24}#nav .t.on{background:#2a2d44;color:#a8b8ff}
+#body{flex:1;overflow:auto;padding:26px 34px 60px}h1{font-weight:500;margin:0 0 4px}.sub{color:#9a9aa2;margin-bottom:22px}
+.card{background:#1a1a1e;border:1px solid #2a2a30;border-radius:16px;padding:6px 18px;margin-bottom:18px}
+.row{display:flex;align-items:center;gap:16px;padding:13px 0;border-bottom:1px solid #26262b}.row:last-child{border:0}
+.row .l{flex:1}.row .l b{display:block;font-weight:500}.row .l span{color:#9a9aa2;font-size:13px}
+input[type=text],input[type=password],select,textarea{background:#101013;border:1px solid #33333a;color:#edebe6;border-radius:10px;padding:9px 12px;font-size:14px;min-width:240px;font-family:inherit}
+input[type=range]{width:240px}button{background:#2a2d44;color:#cfd7ff;border:1px solid #3b4066;border-radius:10px;padding:9px 16px;cursor:pointer;font-size:14px}button:hover{background:#343859}button.dng{background:#3a1d22;border-color:#6a2b34;color:#ffb3be}
+.sw{position:relative;width:46px;height:26px;background:#33333a;border-radius:13px;cursor:pointer;flex:none}.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.15s}.sw.on{background:#6c7bd8}.sw.on::after{left:23px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:18px}.stat{background:#1a1a1e;border:1px solid #2a2a30;border-radius:14px;padding:14px 16px}.stat small{color:#9a9aa2;display:block;margin-bottom:6px}.stat b{font-size:20px;font-weight:500;word-break:break-all}
+.ok{color:#7cffb2}.warn{color:#ffd27c}.err{color:#ff8a9a}pre{background:#101013;border:1px solid #2a2a30;border-radius:12px;padding:14px;overflow:auto;font-size:12.5px;max-height:420px;margin:0}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:9px 6px;border-bottom:1px solid #26262b}th{color:#9a9aa2;font-weight:500}
+#lock{position:fixed;inset:0;background:#0e0e11;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:9}
+</style></head><body>
+<div id="lock"><img src="omen_wordmark.png" width="140" alt=""><div>Enter the admin PIN</div><input id="pin" type="password" autofocus><button id="unlock">Unlock</button><div id="pinmsg" class="err"></div></div>
+<div id="nav"><img src="omen_wordmark.png" alt="Omen"></div>
+<div id="body"></div>
+<script src="admin.js"></script>
+</body></html>

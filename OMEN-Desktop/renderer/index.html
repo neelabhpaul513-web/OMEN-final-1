@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; media-src 'self' file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>OMEN</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<video id="wind" src="omen_wind.mp4" autoplay loop muted playsinline></video><div id="shade"></div>
+<div id="app">
+  <aside id="side">
+    <img class="wm" src="omen_wordmark.png" alt="Omen">
+    <div class="nav" id="nChats">💬&nbsp; Chats</div>
+    <div class="nav" id="nNotes">📝&nbsp; Notes</div>
+    <div class="nav" id="nFile">📎&nbsp; Share a file</div>
+    <div class="nav" id="nAdmin">🛡️&nbsp; Admin panel</div>
+    <div class="sep"></div>
+    <div class="lbl">Recents</div>
+    <div id="recents"></div>
+    <div class="bottom"><div class="avatar" id="avatar">OM</div><button class="newchat" id="newChat">＋ New chat</button></div>
+  </aside>
+  <section id="main">
+    <div id="top"><button class="rbtn" id="burger" title="Menu">☰</button><img src="omen_wordmark.png" alt="Omen"><button class="rbtn" id="gear" title="Admin panel">⚙</button></div>
+    <div id="status">READY</div>
+    <div id="face" class="idle"><i class="l"></i><i class="r"></i></div>
+    <div id="chat"></div>
+    <div id="composer">
+      <div id="plus"></div>
+      <div id="attach"><div class="items" id="items"></div><div class="acts" id="acts"></div></div>
+      <textarea id="input" rows="1" placeholder="Message OMEN, drop a file, or hold the mic to talk"></textarea>
+      <div class="crow">
+        <button class="cb" id="bPlus" title="More">＋</button>
+        <button id="mode">Chat</button>
+        <div class="sp"></div>
+        <button class="cb" id="bMic" title="Talk (Ctrl+Shift+Space)">🎤</button>
+        <button class="cb white" id="bGo" title="Send">➤</button>
+      </div>
+    </div>
+  </section>
+</div>
+<div id="drop">Drop photos or documents here</div>
+<div id="lightbox"><img alt=""></div>
+<script src="app.js"></script>
+</body></html>

@@ -1,0 +1,32 @@
+{
+  "name": "omen-desktop",
+  "productName": "OMEN",
+  "version": "1.0.0",
+  "description": "OMEN desktop assistant with admin panel",
+  "main": "main.js",
+  "author": "OMEN",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "1.1.1"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.neelabh.omen.desktop",
+    "productName": "OMEN",
+    "files": ["main.js", "preload.js", "renderer/**/*", "build/icon.png", "node_modules/**/*"],
+    "win": { "target": "nsis", "icon": "build/icon.ico" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "artifactName": "OMEN-Setup.exe" },
+    "mac": { "target": "dmg", "icon": "build/icon.png" },
+    "linux": { "target": "AppImage", "icon": "build/icon.png" }
+  }
+}
