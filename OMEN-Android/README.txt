@@ -65,3 +65,14 @@ V12: NEW LAYOUT (Claude-style). Menu (top-left) opens a side drawer: Chats, Note
  HEY OMEN: now uses an offline detector (Vosk). First time you awaken OMEN it offers a ~40 MB model download. Then say "Hey Omen" in any app.
 
 V12.1: added 'Hey Women' / 'Hey Woman' as wake phrases (the phone often mishears Omen). Mic errors now retry quietly with back-off, switch language/offline mode automatically, and the offline detector retries instead of giving up.
+
+V12.2: photo analysis finds a model that accepts images (tries several, remembers the one that works), retries on Groq rate limits, sends big multi-page notes one page at a time, and offline OCR now reads each photo twice (normal + contrast boosted). Errors now show both the vision error and the offline-reading error.
+
+V13:
+ HISTORY: menu > History opens a full screen with EVERY question, search, photo, document and command (time, type, your question and OMEN's answer),
+  search box, type filters, tap to read/copy/delete/ask again. Recents in the menu shows the latest 40. Clearing the chat never deletes history.
+ CAMERA: + > Camera (or say "camera search"). Take a photo, tap "Search this photo": OMEN says what it is, searches the web and lists references
+  plus a Google Images link. The same photo can also be read as notes (Read text / Summarize / Key points / Quiz me).
+ PHARMA RESEARCH: tap the mode chip (Chat > Web search > Pharma research), or say "full research on metformin", "pharma research ...", or just ask a drug/disease question.
+  OMEN plans the search, pulls papers from PubMed, trials from ClinicalTrials.gov and the FDA drug label, then writes a structured brief
+  (summary, mechanism, clinical evidence, dosing per label, adverse effects, interactions, regulatory status, gaps) with numbered references you can tap.

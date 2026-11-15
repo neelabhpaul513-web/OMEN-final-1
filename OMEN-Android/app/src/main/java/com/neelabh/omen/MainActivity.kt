@@ -59,7 +59,11 @@ class MainActivity : Activity() {
     private lateinit var histList: ListView
     private lateinit var histEmpty: TextView
     private var panelW = 0
-    private var webMode = false
+    private var mode = 0                       // 0 chat, 1 web search, 2 pharma research
+    private val webMode get() = mode == 1
+    private val pharmaMode get() = mode == 2
+    private var cameraFile: File? = null
+    private var autoIdentify = false
     private var pendingText: String? = null
     private var pendingSearch = false
     private val pendingImages = mutableListOf<File>()
@@ -153,7 +157,7 @@ class MainActivity : Activity() {
         modeChip = TextView(this).apply {
             textSize = 15f; setTextColor(TXT); gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0)
             background = pill(0xFF2C2C30.toInt(), 0x22FFFFFF, 22); isClickable = true
-            setOnClickListener { setWebMode(!webMode) }
+            setOnClickListener { setMode((mode + 1) % 3) }
         }
         brow.addView(modeChip, lp(WRAP, dp(44)).apply { marginStart = dp(8) })
         brow.addView(View(this), lp(0, 1).apply { weight = 1f })
@@ -186,6 +190,7 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     private fun handleIntent(i: Intent?) {
         if (i == null) return
+        if (i.getBooleanExtra("camera", false)) { i.removeExtra("camera"); launchCamera(true) }
         if (i.getBooleanExtra("autostart", false) && !OmenService.running && perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) reallyStart()
         val uris = mutableListOf<Uri>()
         when (i.action) {
@@ -226,7 +231,8 @@ class MainActivity : Activity() {
             setOnClickListener { f() }
         })
         nav(R.drawable.ic_chat, "Chats") { closeDrawer() }
-        nav(R.drawable.ic_file, "Notes") { closeDrawer(); ChatLog.add(this, true, "read my notes"); render(); send("read my notes", false) }
+        nav(R.drawable.ic_history, "History") { closeDrawer(); startActivityForResult(Intent(this, HistoryActivity::class.java), 90) }
+        nav(R.drawable.ic_file, "Notes") { closeDrawer(); ChatLog.add(this, true, "read my notes"); render(); send("read my notes", false, forceChat = true) }
         nav(R.drawable.ic_attach, "Share a file") { closeDrawer(); pickDocument() }
         nav(R.drawable.ic_gear, "Settings") { closeDrawer(); startActivity(Intent(this, SettingsActivity::class.java)) }
         panel.addView(View(this).apply { setBackgroundColor(0x22FFFFFF) }, lp(MATCH, dp(1)).apply { topMargin = dp(10); bottomMargin = dp(14) })
@@ -254,7 +260,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshHistory() {
-        val h = QueryHistory.all(this)
+        val h = HistoryStore.all(this).take(40)
         histEmpty.visibility = if (h.isEmpty()) View.VISIBLE else View.GONE
         histList.adapter = object : BaseAdapter() {
             override fun getCount() = h.size
@@ -262,12 +268,12 @@ class MainActivity : Activity() {
             override fun getItemId(position: Int) = position.toLong()
             override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), dp(13), dp(6), dp(13))
-                addView(ImageView(context).apply { setImageDrawable(icon(R.drawable.ic_chat, 0xFF8A8A92.toInt())) }, lp(dp(22), dp(22)))
-                addView(TextView(context).apply { text = h[position]; textSize = 17f; setTextColor(TXT); maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
+                addView(ImageView(context).apply { setImageDrawable(icon(if (h[position].type == "Pharma research") R.drawable.ic_flask else R.drawable.ic_chat, 0xFF8A8A92.toInt())) }, lp(dp(22), dp(22)))
+                addView(TextView(context).apply { text = h[position].q; textSize = 17f; setTextColor(TXT); maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
                     lp(0, WRAP).apply { weight = 1f; marginStart = dp(16) })
             }
         }
-        histList.setOnItemClickListener { _, _, pos, _ -> input.setText(h[pos]); input.setSelection(input.text.length); closeDrawer() }
+        histList.setOnItemClickListener { _, _, pos, _ -> input.setText(h[pos].q); input.setSelection(input.text.length); closeDrawer() }
     }
 
     private fun openDrawer() {
@@ -285,7 +291,9 @@ class MainActivity : Activity() {
         val items = listOf<Triple<Int, String, () -> Unit>>(
             Triple(R.drawable.ic_photo, "Photos", { pickPhoto() }),
             Triple(R.drawable.ic_attach, "Files and documents", { pickDocument() }),
+            Triple(R.drawable.ic_camera, "Camera (search or scan notes)", { launchCamera(false) }),
             Triple(R.drawable.ic_search, "Web search: " + (if (webMode) "ON" else "OFF"), { setWebMode(!webMode) }),
+            Triple(R.drawable.ic_flask, "Pharma research: " + (if (pharmaMode) "ON" else "OFF"), { setMode(if (pharmaMode) 0 else 2) }),
             Triple(if (prefs.getBoolean("voice", true)) R.drawable.ic_vol_on else R.drawable.ic_vol_off, "Spoken replies: " + (if (prefs.getBoolean("voice", true)) "ON" else "OFF"),
                 { prefs.edit().putBoolean("voice", !prefs.getBoolean("voice", true)).apply() }),
             Triple(R.drawable.ic_photo, "Create an image", { input.setText("Create an image of "); input.setSelection(input.text.length); input.requestFocus() })
@@ -306,11 +314,14 @@ class MainActivity : Activity() {
         pw.showAsDropDown(anchor, 0, -(anchor.height + box.measuredHeight + dp(10)))
     }
 
-    private fun setWebMode(on: Boolean) {
-        webMode = on
-        modeChip.text = if (on) "Web search" else "Chat"
-        modeChip.setTextColor(if (on) ACC else TXT)
-        modeChip.background = pill(if (on) 0xFF2F3550.toInt() else 0xFF2C2C30.toInt(), if (on) ACC else 0x22FFFFFF, 22)
+    private fun setWebMode(on: Boolean) = setMode(if (on) 1 else 0)
+
+    private fun setMode(m: Int) {
+        mode = m
+        modeChip.text = when (m) { 1 -> "Web search"; 2 -> "Pharma research"; else -> "Chat" }
+        modeChip.setTextColor(when (m) { 1 -> ACC; 2 -> 0xFFFF9AAE.toInt(); else -> TXT })
+        modeChip.background = pill(when (m) { 1 -> 0xFF2F3550.toInt(); 2 -> 0xFF3D2330.toInt(); else -> 0xFF2C2C30.toInt() }, when (m) { 1 -> ACC; 2 -> 0xFFFF7A90.toInt(); else -> 0x22FFFFFF }, 22)
+        input.hint = if (m == 2) "Ask a drug, disease or formulation question for a full research brief" else "Message OMEN or tap the waveform to talk"
     }
 
     private fun hasContent() = input.text.toString().isNotBlank() || pendingImages.isNotEmpty() || pendingDocs.isNotEmpty()
@@ -365,6 +376,46 @@ class MainActivity : Activity() {
         val f = File(dir, "p${System.currentTimeMillis()}.jpg")
         f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 82, it) }
         return f
+    }
+
+    private fun launchCamera(auto: Boolean) {
+        autoIdentify = auto
+        if (pendingImages.size >= 5) { toast("Up to 5 photos at a time"); return }
+        try {
+            val dir = File(cacheDir, "camera"); dir.mkdirs()
+            val f = File(dir, "shot" + System.currentTimeMillis() + ".jpg"); cameraFile = f
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+            startActivityForResult(Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION), 91)
+        } catch (e: Exception) { toast("No camera app found") }
+    }
+
+    private fun addCamera(f: File) {
+        Thread {
+            try {
+                val saved = savePhoto(Uri.fromFile(f)); f.delete()
+                runOnUiThread { pendingImages.add(saved); updatePreview(); if (autoIdentify) { autoIdentify = false; sendPhotos("identify", "") } }
+            } catch (e: Exception) { runOnUiThread { toast("Could not read the camera photo") } }
+        }.start()
+    }
+
+    /** One line about the photo, then a web search about it with references and a Google Images link. */
+    private fun identifyPhoto(key: String, files: List<File>): String {
+        Brain.visionModel = prefs.getString("visionModel", "") ?: ""
+        var line = ""; var q = ""
+        try {
+            val first = Brain.vision(key, "In one short line say what this photo shows. Then on a new line write QUERY: followed by the best web search query (max 8 words) to learn more about it. Plain text only.", files.take(1).map { it.readBytes() }, 300)
+            prefs.edit().putString("visionModel", Brain.visionModel).apply()
+            line = first.lines().firstOrNull { it.isNotBlank() && !it.trim().startsWith("QUERY", ignoreCase = true) }?.trim() ?: first.take(120)
+            q = Regex("QUERY:?\\s*(.+)", RegexOption.IGNORE_CASE).find(first)?.groupValues?.get(1)?.trim() ?: line
+        } catch (e: Exception) {
+            val txt = try { Ocr.read(files[0].path).replace(Regex("\\s+"), " ").trim().take(120) } catch (e2: Exception) { "" }
+            if (txt.length < 4) return "I could not identify this photo.\n• Vision AI: ${e.message}"
+            line = "Text found in the photo: $txt"; q = txt
+        }
+        val r = try { Brain.researchRefs(key, q) } catch (e: Exception) { return line + "\n\nThe web search failed: " + e.message }
+        val refs = r.refs + ("Google Images" to "https://www.google.com/search?tbm=isch&q=" + java.net.URLEncoder.encode(q, "UTF-8"))
+        return line + "\n\n" + r.text + "\n\nReferences:\n" + refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
     }
 
     private fun pickPhoto() {
@@ -428,7 +479,7 @@ class MainActivity : Activity() {
             }, lp(WRAP, dp(40)).apply { marginEnd = dp(8) })
         }
         attachRow.addView(circleBtn(R.drawable.ic_close, "Remove all") { clearAttachments() }, lp(dp(34), dp(34)))
-        val labels = if (pendingImages.isNotEmpty()) listOf("Read text" to "read", "Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz")
+        val labels = if (pendingImages.isNotEmpty()) listOf("Search this photo" to "identify", "Read text" to "read", "Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz")
                      else listOf("Summarize" to "summary", "Key points" to "key", "Quiz me" to "quiz")
         for ((l, md) in labels) chipRow.addView(act(l, md), lp(WRAP, WRAP).apply { marginEnd = dp(8) })
         updateAction()
@@ -472,14 +523,18 @@ class MainActivity : Activity() {
         if (files.isEmpty()) return
         val extra = if (docs.isEmpty()) "" else "\n\nAlso use this attached document text:\n" + docs.joinToString("\n\n") { it.first + ":\n" + it.second }.take(8000)
         val prompt = notesPrompt(mode, typed) + extra
-        val label = when (mode) { "read" -> "Read text"; "summary" -> "Summarize"; "key" -> "Key points"; "quiz" -> "Quiz me"; "custom" -> typed; else -> "Read and summarize" }
+        val label = when (mode) { "identify" -> "Search this photo"; "read" -> "Read text"; "summary" -> "Summarize"; "key" -> "Key points"; "quiz" -> "Quiz me"; "custom" -> typed; else -> "Read and summarize" }
         clearAttachments(); input.setText("")
         val head = if (files.size == 1) "IMG:${files[0].path}" else "GAL:" + files.joinToString("|") { it.path }
         ChatLog.add(this, true, "\u0001$head\u0001$label"); render()
         view.state = "thinking"; status.text = "THINKING"
         Thread {
-            val ans = try { Brain.vision(key, prompt, files.map { it.readBytes() }) } catch (e: Exception) {
-                try { ocrFallback(key, files, mode, prompt) } catch (e2: Exception) { "Photo analysis failed: ${e.message}" }
+            Brain.visionModel = prefs.getString("visionModel", "") ?: ""
+            val ans = if (mode == "identify") identifyPhoto(key, files) else try {
+                Brain.vision(key, prompt, files.map { it.readBytes() }).also { prefs.edit().putString("visionModel", Brain.visionModel).apply() }
+            } catch (e: Exception) {
+                try { ocrFallback(key, files, mode, prompt) }
+                catch (e2: Exception) { "Photo analysis failed.\n• Vision AI: ${e.message}\n• Offline reading: ${e2.message}" }
             }
             ChatLog.add(this, false, ans)
             runOnUiThread { view.state = "idle"; status.text = stateLabel(); render() }
@@ -509,7 +564,8 @@ class MainActivity : Activity() {
         val text = files.mapIndexed { i, f -> (if (files.size > 1) "--- page ${i + 1} ---\n" else "") + Ocr.read(f.path) }.joinToString("\n\n").trim()
         if (text.isBlank()) return "I could not find any readable text in the photo."
         if (mode == "read") return text + "\n\n(read with offline OCR on this phone; handwriting may be inaccurate)"
-        return Brain.notesFromText(key, text, prompt) + "\n\n(based on offline OCR text)"
+        return try { Brain.notesFromText(key, text, prompt) + "\n\n(based on offline OCR text)" }
+        catch (e: Exception) { "I could read the text but the AI could not analyse it (${e.message}). Here is what I read:\n\n" + text }
     }
 
     // ---------- chat bubbles (glass) ----------
@@ -579,15 +635,16 @@ class MainActivity : Activity() {
         if (pendingImages.isNotEmpty() || pendingDocs.isNotEmpty()) { sendAttachments(if (t.isEmpty()) "default" else "custom", t); return }
         if (t.isEmpty()) return
         input.setText("")
+        if (pharmaMode) ChatLog.pendingType = "Pharma research"
         ChatLog.add(this, true, t); render()
         send(t, webMode)
     }
 
-    private fun send(t: String, search: Boolean, spoken: Boolean = false) {
+    private fun send(t: String, search: Boolean, spoken: Boolean = false, forceChat: Boolean = false) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingText = t; pendingSearch = search; requestPermissions(perms, 1); return
         }
-        ContextCompat.startForegroundService(this, Intent(this, OmenService::class.java).putExtra("cmd", t).putExtra("search", search).putExtra("spoken", spoken))
+        ContextCompat.startForegroundService(this, Intent(this, OmenService::class.java).putExtra("cmd", t).putExtra("search", search).putExtra("spoken", spoken).putExtra("pharma", pharmaMode && !forceChat))
         view.state = "thinking"; status.text = "THINKING"
     }
 
@@ -614,9 +671,14 @@ class MainActivity : Activity() {
                 val t = d?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
                 if (res == RESULT_OK && !t.isNullOrBlank()) {
                     if (rc == 79) { input.setText((input.text.toString() + " " + t).trim()); input.setSelection(input.text.length) }
-                    else { ChatLog.add(this, true, t); render(); send(t, webMode, true) }
+                    else { if (pharmaMode) ChatLog.pendingType = "Pharma research"; ChatLog.add(this, true, t); render(); send(t, webMode, true) }
                 }
             }
+            90 -> {
+                val ask = d?.getStringExtra("ask")
+                if (res == RESULT_OK && !ask.isNullOrBlank()) { input.setText(ask); input.setSelection(input.text.length); input.requestFocus() }
+            }
+            91 -> { if (res == RESULT_OK) cameraFile?.let { addCamera(it) } else cameraFile?.delete() }
             78, 80 -> {
                 val uris = mutableListOf<Uri>()
                 d?.clipData?.let { cd -> for (n in 0 until cd.itemCount) uris.add(cd.getItemAt(n).uri) }

@@ -125,7 +125,7 @@ class SettingsActivity : Activity() {
         header("Data")
         val data = card(); body.addView(data)
         button(data, "Clear current chat") { ChatLog.clear(this); toast("Chat cleared") }
-        button(data, "Clear history (Recents)") { QueryHistory.clear(this); toast("History cleared") }
+        button(data, "Clear history (Recents)") { QueryHistory.clear(this); HistoryStore.clear(this); toast("History cleared") }
         button(data, "Clear notes") { prefs.edit().remove("notes").apply(); toast("Notes cleared") }
 
         header("About")

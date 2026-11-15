@@ -44,6 +44,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private var defaultLang = false
     private var preferOffline = false
     private var ttsReady = false
+    @Volatile private var pharmaNext = false
     private var paused = false
     private var typedMode = false
     private val pending = mutableListOf<Pair<String, Boolean>>()
@@ -67,6 +68,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         }
         i?.getStringExtra("cmd")?.let { c ->
             val search = i.getBooleanExtra("search", false)
+            if (i.getBooleanExtra("pharma", false)) pharmaNext = true
             if (ttsReady) typed(c, search, i.getBooleanExtra("spoken", false)) else pending.add(c to search)
         }
         return START_STICKY
@@ -78,7 +80,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         Thread {
             try {
                 val cmd = c.trim().replace(Regex("^(omen|oman)[, ]+", RegexOption.IGNORE_CASE), "")
-                if (search) searchWeb(cmd) else execute(cmd, spoken)
+                if (pharmaNext) { pharmaNext = false; pharmaSearch(cmd) } else if (search) searchWeb(cmd) else execute(cmd, spoken)
             } catch (e: Exception) { say("Something broke. ${e.message}") }
         }.start()
     }
@@ -308,6 +310,22 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         say("Here are images of $q.", false)
     }
 
+    private val pharmaWords = Regex("\\b(drugs?|dose|dosage|dosing|mechanism of action|pharmacokinetics?|pharmacodynamics?|pharmacology|pharmaceutics?|pharmacy|adverse (?:effects?|reactions?|events?)|side effects?|contraindications?|drug interactions?|clinical trials?|therapy|therapeutic|treatment|disease|syndrome|disorder|infections?|cancer|diabetes|hypertension|antibiotics?|antiviral|vaccines?|inhibitors?|agonists?|antagonists?|receptors?|enzymes?|bioavailability|formulations?|excipients?|tablets?|capsules?|fda|cdsco|monograph|pharmacopoeia|toxicity|overdose|metabolism|half-life|clearance|indications?|prescription|analgesics?|nsaids?|steroids?|insulin|[a-z]+(?:mab|nib|pril|sartan|olol|statin|vir|cillin|mycin|azole|dipine|gliptin|gliflozin|prazole|tidine|floxacin|cycline|setron|zepam|barbital))\\b", RegexOption.IGNORE_CASE)
+    private fun isPharma(t: String) = pharmaWords.containsMatchIn(t)
+
+    /** Full pharmaceutical / medical research brief with references (PubMed, ClinicalTrials.gov, FDA label). */
+    private fun pharmaSearch(q: String) {
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) return say("Give me your Groq key in the settings.")
+        HistoryStore.retag(this, "Pharma research")
+        ChatLog.add(this, false, "Researching the literature (PubMed, ClinicalTrials.gov, FDA)…"); ui("thinking")
+        val r = Brain.pharmaResearch(key, q)
+        val refs = if (r.refs.isEmpty()) "" else "\n\nReferences:\n" + r.refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
+        ChatLog.add(this, false, r.text + refs)
+        val summary = Regex("SUMMARY\\s*(.+?)(?:\\n\\s*\\n|\\n[A-Z ]{6,}\\n)", RegexOption.DOT_MATCHES_ALL).find(r.text)?.groupValues?.get(1)?.trim() ?: r.text.take(400)
+        say(summary.take(450), false)
+    }
+
     private fun looksLikeQuestion(t: String): Boolean {
         if (Regex("joke|hello|how are you|your name|thank|good (morning|night|evening)").containsMatchIn(t)) return false
         return t.endsWith("?") || Regex("^(who|what|when|where|why|how|which|is|are|was|were|do|does|did|can|will|should|tell|give|explain|latest|news|weather|price|score|define|meaning)\\b").containsMatchIn(t)
@@ -352,6 +370,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         if (m != null) return say(act.navigate(m.groupValues[1]))
         m = Regex("^play\\s+(.+?)(?:\\s+on\\s+(youtube|spotify))?$").find(t)
         if (m != null) return say(act.playOn(m.groupValues[1], m.groupValues[2]))
+        if (Regex("\\b(camera search|search with (?:the )?camera|scan with (?:the )?camera|identify this|what is this)\\b").containsMatchIn(t)) return say(act.cameraSearch())
         m = Regex("^(?:please\\s+)?(?:open|launch|start)\\s+(.+)").find(t)
         if (m != null) return say(act.openApp(m.groupValues[1]))
         m = Regex("timer.*?(\\d+(?:\\.\\d+)?)\\s*(sec|min|hour|hr)").find(t) ?: Regex("(\\d+(?:\\.\\d+)?)\\s*(sec|min|hour|hr)\\w*\\s+timer").find(t)
@@ -386,12 +405,16 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         m = Regex("^(?:show|find|get|search|give|display)(?:\\s+me)?(?:\\s+(?:some|a few))?\\s+(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
             ?: Regex("^(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
         if (m != null) return imageSearch(m.groupValues[1])
+        m = Regex("^(?:(?:full|detailed|complete|pharma|pharmaceutical|medical|clinical)\\s+)+(?:research|literature review|review|study|report)\\s+(?:on|about|of|for)?\\s*(.+)").find(t)
+            ?: Regex("^(?:research|literature review)\\s+(?:on|about|of|for)?\\s*(.+)").find(t)?.takeIf { isPharma(it.groupValues[1]) }
+        if (m != null) return pharmaSearch(m.groupValues[1])
         m = Regex("^(?:search for|search|look up|google|research|find out about|find out|tell me about)\\s+(.+)").find(t)
         if (m != null) {
             return searchWeb(m.groupValues[1])
         }
         if (Regex("goodbye|shut down|stop listening").containsMatchIn(t)) { say("Back to the shadows."); main.postDelayed({ stopSelf() }, 2500); return }
-        if (searchFallback || looksLikeQuestion(t)) searchWeb(c) else ai(c)
+        if (isPharma(t) && (searchFallback || looksLikeQuestion(t))) pharmaSearch(c)
+        else if (searchFallback || looksLikeQuestion(t)) searchWeb(c) else ai(c)
     }
 
     private fun ai(q: String) {
@@ -440,7 +463,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
             prefs.edit().putStringSet("facts", s.toList().takeLast(40).toSet()).apply(); "I will remember."
         }
         "image_search" -> { imageSearch(a.optString("query")); "" }
-        "research" -> { searchWeb(a.optString("query")); "" }
+        "research" -> { val rq = a.optString("query"); if (isPharma(rq.lowercase())) pharmaSearch(rq) else searchWeb(rq); "" }
         "generate_image" -> { generateImage(a.optString("prompt")); "" }
         "read_website" -> { readLink(a.optString("url"), a.optString("question").ifBlank { "Summarize this page." }); "" }
         else -> "I do not know that one."

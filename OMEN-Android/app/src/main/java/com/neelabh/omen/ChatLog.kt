@@ -8,6 +8,8 @@ import org.json.JSONObject
 object ChatLog {
     private const val MAX = 60
     @Volatile var version = 0
+    /** Set by the screen/service just before add(user=true) to tag the next history entry (e.g. "Pharma research"). */
+    @Volatile var pendingType = ""
 
     @Synchronized
     fun add(c: Context, user: Boolean, text: String) {
@@ -18,7 +20,10 @@ object ChatLog {
         for (i in maxOf(0, a.length() - MAX) until a.length()) out.put(a.get(i))
         p.edit().putString("chat", out.toString()).apply()
         version++
-        if (user) QueryHistory.add(c, if (text.startsWith("\u0001")) text.substringAfter('\u0001').substringAfter('\u0001') else text)
+        if (user) {
+            QueryHistory.add(c, if (text.startsWith("\u0001")) text.substringAfter('\u0001').substringAfter('\u0001') else text)
+            HistoryStore.addQuery(c, text, if (pendingType.isNotEmpty()) pendingType else null); pendingType = ""
+        } else HistoryStore.setAnswer(c, text)
     }
 
     @Synchronized

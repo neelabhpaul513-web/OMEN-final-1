@@ -166,6 +166,9 @@ class Actions(private val c: Context) {
         return if (go(Intent(action))) "Opening $kind settings." else "I could not open settings."
     }
 
+    fun cameraSearch(): String =
+        if (go(Intent(c, MainActivity::class.java).putExtra("camera", true).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))) "Opening the camera." else "Open OMEN and tap plus, then Camera."
+
     private fun waNumber(raw: String): String {
         var d = raw.replace(Regex("\\D"), "")
         if (d.length == 11 && d.startsWith("0")) d = d.substring(1)
