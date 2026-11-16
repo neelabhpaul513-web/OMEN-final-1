@@ -76,3 +76,12 @@ V13:
  PHARMA RESEARCH: tap the mode chip (Chat > Web search > Pharma research), or say "full research on metformin", "pharma research ...", or just ask a drug/disease question.
   OMEN plans the search, pulls papers from PubMed, trials from ClinicalTrials.gov and the FDA drug label, then writes a structured brief
   (summary, mechanism, clinical evidence, dosing per label, adverse effects, interactions, regulatory status, gaps) with numbered references you can tap.
+
+V14 PHARMA RESEARCH (all sources report whether they worked):
+ Literature and regulatory: PubMed (real XML parsing, evidence-first search, retry queries, study type tags), ClinicalTrials.gov (broad search, phase/status/enrolment/sponsor/primary outcomes + posted results),
+  openFDA label (explicit OR search, alternative drug names), DailyMed (second official label source + cross-check).
+ Molecular tools (say these in any mode): "structure of aspirin" (PubChem data + 2D picture), "ADMET of metformin" (rule-based estimate, clearly labelled),
+  "targets of imatinib" / "drug-target interaction imatinib" (ChEMBL mechanisms + measured potency), "dock metformin with AMPK" (docking PREPARATION: ligand SDF, best PDB structures, known potency, step-by-step; no fake scores),
+  "screen aspirin, ibuprofen, naproxen" (drug-likeness ranking), "compounds active against EGFR" (potent compounds from ChEMBL).
+ Source validation: every statement must cite a numbered source; uncited statements are tagged [unverified], invalid citation numbers become [?], and a citation check line is added.
+ References show PMID / NCT / label dates, tappable links and the retrieval date. If every database fails you are told, and the answer is marked not source-validated.

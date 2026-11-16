@@ -310,20 +310,21 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         say("Here are images of $q.", false)
     }
 
-    private val pharmaWords = Regex("\\b(drugs?|dose|dosage|dosing|mechanism of action|pharmacokinetics?|pharmacodynamics?|pharmacology|pharmaceutics?|pharmacy|adverse (?:effects?|reactions?|events?)|side effects?|contraindications?|drug interactions?|clinical trials?|therapy|therapeutic|treatment|disease|syndrome|disorder|infections?|cancer|diabetes|hypertension|antibiotics?|antiviral|vaccines?|inhibitors?|agonists?|antagonists?|receptors?|enzymes?|bioavailability|formulations?|excipients?|tablets?|capsules?|fda|cdsco|monograph|pharmacopoeia|toxicity|overdose|metabolism|half-life|clearance|indications?|prescription|analgesics?|nsaids?|steroids?|insulin|[a-z]+(?:mab|nib|pril|sartan|olol|statin|vir|cillin|mycin|azole|dipine|gliptin|gliflozin|prazole|tidine|floxacin|cycline|setron|zepam|barbital))\\b", RegexOption.IGNORE_CASE)
+    private val pharmaWords = Regex("\\b(admet|docking|ligand|smiles|molecular|drugs?|dose|dosage|dosing|mechanism of action|pharmacokinetics?|pharmacodynamics?|pharmacology|pharmaceutics?|pharmacy|adverse (?:effects?|reactions?|events?)|side effects?|contraindications?|drug interactions?|clinical trials?|therapy|therapeutic|treatment|disease|syndrome|disorder|infections?|cancer|diabetes|hypertension|antibiotics?|antiviral|vaccines?|inhibitors?|agonists?|antagonists?|receptors?|enzymes?|bioavailability|formulations?|excipients?|tablets?|capsules?|fda|cdsco|monograph|pharmacopoeia|toxicity|overdose|metabolism|half-life|clearance|indications?|prescription|analgesics?|nsaids?|steroids?|insulin|[a-z]+(?:mab|nib|pril|sartan|olol|statin|vir|cillin|mycin|azole|dipine|gliptin|gliflozin|prazole|tidine|floxacin|cycline|setron|zepam|barbital))\\b", RegexOption.IGNORE_CASE)
     private fun isPharma(t: String) = pharmaWords.containsMatchIn(t)
 
-    /** Full pharmaceutical / medical research brief with references (PubMed, ClinicalTrials.gov, FDA label). */
+    /** Pharmaceutical research: full cited brief, or a molecular tool (structure, ADMET, targets, docking prep, screening). */
     private fun pharmaSearch(q: String) {
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) return say("Give me your Groq key in the settings.")
+        val cmd = Pharma.isCommand(q.trim().lowercase())
         HistoryStore.retag(this, "Pharma research")
-        ChatLog.add(this, false, "Researching the literature (PubMed, ClinicalTrials.gov, FDA)…"); ui("thinking")
-        val r = Brain.pharmaResearch(key, q)
-        val refs = if (r.refs.isEmpty()) "" else "\n\nReferences:\n" + r.refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
-        ChatLog.add(this, false, r.text + refs)
-        val summary = Regex("SUMMARY\\s*(.+?)(?:\\n\\s*\\n|\\n[A-Z ]{6,}\\n)", RegexOption.DOT_MATCHES_ALL).find(r.text)?.groupValues?.get(1)?.trim() ?: r.text.take(400)
-        say(summary.take(450), false)
+        ChatLog.add(this, false, if (cmd) "Running the molecular analysis (PubChem, ChEMBL, RCSB)…" else "Researching the literature (PubMed, ClinicalTrials.gov, openFDA, DailyMed, PubChem, ChEMBL)…"); ui("thinking")
+        val out = Pharma.run(this, key, q)
+        out.image?.let { ChatLog.add(this, false, "\u0001IMG:" + it + "\u0001" + q) }
+        val refs = if (out.refs.isEmpty()) "" else "\n\nREFERENCES (retrieved " + Pharma.today() + ")\n" + out.refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
+        ChatLog.add(this, false, out.text + refs)
+        say(out.speak.ifBlank { out.text.take(300) }, false)
     }
 
     private fun looksLikeQuestion(t: String): Boolean {
@@ -405,6 +406,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         m = Regex("^(?:show|find|get|search|give|display)(?:\\s+me)?(?:\\s+(?:some|a few))?\\s+(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
             ?: Regex("^(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
         if (m != null) return imageSearch(m.groupValues[1])
+        if (Pharma.isCommand(t)) return pharmaSearch(c)
         m = Regex("^(?:(?:full|detailed|complete|pharma|pharmaceutical|medical|clinical)\\s+)+(?:research|literature review|review|study|report)\\s+(?:on|about|of|for)?\\s*(.+)").find(t)
             ?: Regex("^(?:research|literature review)\\s+(?:on|about|of|for)?\\s*(.+)").find(t)?.takeIf { isPharma(it.groupValues[1]) }
         if (m != null) return pharmaSearch(m.groupValues[1])
