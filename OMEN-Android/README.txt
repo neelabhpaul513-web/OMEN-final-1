@@ -1,10 +1,13 @@
 OMEN: NATIVE ANDROID ASSISTANT (Kotlin, Groq brain)
 ====================================================
 BUILD THE APK (no coding, free):
- 1. github.com > New repository > upload everything inside this folder (include the hidden .github folder).
- 2. Actions tab > "Build NEEL APK"/"Build OMEN APK" > Run workflow > wait 3-5 min.
- 3. Open the finished run > download "OMEN-apk" > unzip > install app-debug.apk on your phone ("Install unknown apps").
- (Or use Android Studio: open folder > Build > Build APK.)
+ IMPORTANT: GitHub only detects Actions workflows at REPOSITORY ROOT/.github/workflows/.
+ OPTION A (upload the whole ZIP contents): extract this ZIP, then upload BOTH the top-level .github folder and the OMEN-Android folder to the repository root.
+ OPTION B (upload only the contents of OMEN-Android): open that folder and upload all its contents, INCLUDING its hidden .github folder, to the repository root.
+ Do NOT upload the ZIP as a single file, and do NOT leave the workflow nested one folder below the repository root.
+ 1. Open the repository's Actions tab. Select "Build OMEN APK" and choose "Run workflow" (or push a commit).
+ 2. Open the run. If successful, download the "OMEN-apk" artifact, unzip it, and install OMEN.apk on your phone (allow "Install unknown apps").
+ (Or use Android Studio: open the OMEN-Android folder > Build > Build APK.)
 
 FIRST RUN: open OMEN > SETUP > paste your Groq key > "Save and test key" (shows which Groq model it connected to)
  > 1. allow Display over apps  > 2. (optional) enable "OMEN auto-send" in Accessibility > 3. battery: Unrestricted
@@ -77,11 +80,15 @@ V13:
   OMEN plans the search, pulls papers from PubMed, trials from ClinicalTrials.gov and the FDA drug label, then writes a structured brief
   (summary, mechanism, clinical evidence, dosing per label, adverse effects, interactions, regulatory status, gaps) with numbered references you can tap.
 
-V14 PHARMA RESEARCH (all sources report whether they worked):
- Literature and regulatory: PubMed (real XML parsing, evidence-first search, retry queries, study type tags), ClinicalTrials.gov (broad search, phase/status/enrolment/sponsor/primary outcomes + posted results),
-  openFDA label (explicit OR search, alternative drug names), DailyMed (second official label source + cross-check).
- Molecular tools (say these in any mode): "structure of aspirin" (PubChem data + 2D picture), "ADMET of metformin" (rule-based estimate, clearly labelled),
-  "targets of imatinib" / "drug-target interaction imatinib" (ChEMBL mechanisms + measured potency), "dock metformin with AMPK" (docking PREPARATION: ligand SDF, best PDB structures, known potency, step-by-step; no fake scores),
-  "screen aspirin, ibuprofen, naproxen" (drug-likeness ranking), "compounds active against EGFR" (potent compounds from ChEMBL).
- Source validation: every statement must cite a numbered source; uncited statements are tagged [unverified], invalid citation numbers become [?], and a citation check line is added.
- References show PMID / NCT / label dates, tappable links and the retrieval date. If every database fails you are told, and the answer is marked not source-validated.
+OMEN RESEARCH LAB (new in this package)
+--------------------------------------
+Open Research Lab from the navigation drawer or the + tools menu. It contains:
+- Pharma Research: invokes OMEN's existing Groq-assisted PubMed / ClinicalTrials.gov / openFDA evidence pipeline.
+- AI Drug Discovery: structured disease-target-candidate research worksheet. This is a planning tool, not validated computational screening, docking, or a drug efficacy predictor.
+- Molecular Structure Viewer: looks up compound properties and displays the PubChem 2D structure using the free PubChem PUG REST service.
+- Drug Comparison: compares PubChem CID, formula, molecular weight, XLogP and TPSA. Descriptors do not establish clinical equivalence or safety.
+- Clinical Trial Analytics: searches ClinicalTrials.gov API v2 and displays study titles, NCT identifiers, status, phases and study links.
+- Voice Control Centre: controls OMEN's existing wake-word and spoken-response preferences and links to full Settings.
+- Image Generation Gallery: browses images saved in Pictures/OMEN.
+
+Network-based research pages require internet access. Pharma Research also requires a valid Groq key configured in Settings. Public data endpoints are subject to their availability and usage policies.

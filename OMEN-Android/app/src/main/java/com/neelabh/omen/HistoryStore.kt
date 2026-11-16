@@ -63,11 +63,10 @@ object HistoryStore {
     /** Attaches OMEN's reply to the newest question that has no answer yet. */
     @Synchronized
     fun setAnswer(c: Context, text: String) {
-        if (text == "Searching the web…" || text == "Reading the page…" || text == "Searching images…" || text.startsWith("Creating your image") || text.startsWith("Researching the literature") || text.startsWith("Running the molecular")) return
+        if (text == "Searching the web…" || text == "Reading the page…" || text == "Searching images…" || text.startsWith("Creating your image") || text.startsWith("Researching the literature")) return
         val a = load(c); if (a.length() == 0) return
         val last = a.getJSONObject(a.length() - 1)
         if (last.optString("a").isNotEmpty() || System.currentTimeMillis() - last.optLong("t") > 10 * 60_000L) return
-        if (text.startsWith("\u0001") && last.optString("ty") == "Pharma research") return
         val ans = if (text.startsWith("\u0001")) "[images] " + text.substringAfter('\u0001').substringAfter('\u0001') else text
         last.put("a", ans.take(6000)); save(c, a)
     }
