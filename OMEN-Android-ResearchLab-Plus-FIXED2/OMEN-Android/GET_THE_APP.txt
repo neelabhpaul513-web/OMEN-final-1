@@ -1,0 +1,13 @@
+GET THE REAL OMEN APP (native Android, Bixby-style). Free. About 10 minutes. Needs a computer browser once.
+
+1. Sign up at github.com. Click "+" > New repository. Name: omen. Choose PUBLIC. Click Create.
+2. Click "uploading an existing file". Unzip this zip first, open the OMEN-Android folder, select EVERYTHING inside and drag it onto the page. Click Commit changes.
+3. The hidden ".github" folder is often skipped by the uploader, so create it by hand:
+   Add file > Create new file. In the name box type exactly:  .github/workflows/build.yml
+   Paste the full contents of WORKFLOW_COPY_THIS.yml.txt into the big box. Click Commit changes.
+4. Open the "Actions" tab. A build starts by itself ("Build OMEN APK"). Wait 4-6 minutes for the green tick.
+   (If you see a red X: open it, copy the red error text and send it to Claude.)
+5. DIRECT DOWNLOAD LINK (open on your phone):
+   https://github.com/YOUR-GITHUB-NAME/omen/releases/latest/download/OMEN.apk
+   Tap it, then open the file and Install (allow "Install unknown apps").
+6. Open OMEN > SETUP > paste Groq key > Save and test > allow "Display over apps" > AWAKEN OMEN.

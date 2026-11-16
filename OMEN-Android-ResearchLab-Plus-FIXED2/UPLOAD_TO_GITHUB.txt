@@ -1,0 +1,16 @@
+OMEN – upload and build instructions
+
+1. Extract this ZIP.
+2. Upload the CONTENTS of the extracted folder to the ROOT of your GitHub repository.
+   Upload the hidden .github folder too. Do not upload the ZIP itself.
+3. Confirm these paths exist in the repository:
+     .github/workflows/build.yml
+     OMEN-Android/settings.gradle.kts
+4. Open the repository's Actions tab.
+5. Select "Build OMEN APK" and click "Run workflow".
+6. If the build succeeds, download the "OMEN-debug-apk" artifact.
+7. Extract that artifact ZIP and install OMEN-debug.apk on your Android phone.
+
+The source project ZIP is not an APK and cannot be installed directly.
+If the build fails, download the "OMEN-gradle-build-log" artifact. It contains the
+full Gradle output needed to identify any remaining Kotlin/Android compilation error.
