@@ -1,0 +1,13 @@
+{
+  "name": "omen-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OMEN: native Android voice assistant (Kotlin + Groq). npm here only wraps the Gradle build.",
+  "scripts": {
+    "setup": "gradle wrapper --gradle-version 8.7",
+    "build": "gradle assembleDebug",
+    "clean": "gradle clean",
+    "install:phone": "adb install -r app/build/outputs/apk/debug/app-debug.apk"
+  },
+  "license": "UNLICENSED"
+}
