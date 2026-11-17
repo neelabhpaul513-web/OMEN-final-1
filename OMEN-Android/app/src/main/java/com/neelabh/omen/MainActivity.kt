@@ -232,8 +232,8 @@ class MainActivity : Activity() {
         })
         nav(R.drawable.ic_chat, "Chats") { closeDrawer() }
         nav(R.drawable.ic_history, "History") { closeDrawer(); startActivityForResult(Intent(this, HistoryActivity::class.java), 90) }
+        nav(R.drawable.ic_dash, "Dashboards") { closeDrawer(); startActivity(Intent(this, HubActivity::class.java)) }
         nav(R.drawable.ic_file, "Notes") { closeDrawer(); ChatLog.add(this, true, "read my notes"); render(); send("read my notes", false, forceChat = true) }
-        nav(R.drawable.ic_flask, "Research Lab") { closeDrawer(); startActivity(Intent(this, ResearchLabActivity::class.java)) }
         nav(R.drawable.ic_attach, "Share a file") { closeDrawer(); pickDocument() }
         nav(R.drawable.ic_gear, "Settings") { closeDrawer(); startActivity(Intent(this, SettingsActivity::class.java)) }
         panel.addView(View(this).apply { setBackgroundColor(0x22FFFFFF) }, lp(MATCH, dp(1)).apply { topMargin = dp(10); bottomMargin = dp(14) })
@@ -297,7 +297,6 @@ class MainActivity : Activity() {
             Triple(R.drawable.ic_flask, "Pharma research: " + (if (pharmaMode) "ON" else "OFF"), { setMode(if (pharmaMode) 0 else 2) }),
             Triple(if (prefs.getBoolean("voice", true)) R.drawable.ic_vol_on else R.drawable.ic_vol_off, "Spoken replies: " + (if (prefs.getBoolean("voice", true)) "ON" else "OFF"),
                 { prefs.edit().putBoolean("voice", !prefs.getBoolean("voice", true)).apply() }),
-            Triple(R.drawable.ic_flask, "Open Research Lab", { startActivity(Intent(this, ResearchLabActivity::class.java)) }),
             Triple(R.drawable.ic_photo, "Create an image", { input.setText("Create an image of "); input.setSelection(input.text.length); input.requestFocus() })
         )
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = pill(0xFF242428.toInt(), 0x33FFFFFF, 22); setPadding(dp(6), dp(8), dp(6), dp(8)) }

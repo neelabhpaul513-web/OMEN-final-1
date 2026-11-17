@@ -227,9 +227,11 @@ object Pharma {
     data class Mol(val cid: Long, val name: String, val formula: String, val mw: Double, val smiles: String, val iupac: String, val xlogp: Double?, val tpsa: Double?,
                    val hbd: Int, val hba: Int, val rot: Int, val charge: Int, val complexity: Double?, val heavy: Int)
 
-    private fun pubchem(name: String): Mol {
+    private fun pubchem(name: String): Mol = pubchemQuery("name", name)
+
+    private fun pubchemQuery(kind: String, name: String): Mol {
         val props = "MolecularFormula,MolecularWeight,SMILES,ConnectivitySMILES,CanonicalSMILES,IsomericSMILES,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount,Charge,Complexity,HeavyAtomCount"
-        val p = JSONObject(get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/" + enc20(name) + "/property/" + props + "/JSON"))
+        val p = JSONObject(get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/" + kind + "/" + enc20(name) + "/property/" + props + "/JSON"))
             .getJSONObject("PropertyTable").getJSONArray("Properties").getJSONObject(0)
         fun d(k: String): Double? = if (p.has(k)) p.opt(k)?.toString()?.toDoubleOrNull() else null
         val smiles = listOf("SMILES", "IsomericSMILES", "CanonicalSMILES", "ConnectivitySMILES").map { p.optString(it) }.firstOrNull { it.isNotBlank() } ?: ""
@@ -457,6 +459,143 @@ object Pharma {
         Out(sb.toString(), listOf("Target ${t.second}" to "https://www.ebi.ac.uk/chembl/target_report_card/${t.first}/") + best.take(5).map { "${it.second} ${it.first}" to "https://www.ebi.ac.uk/chembl/compound_report_card/${it.first}/" }, null, "${best.size} potent compounds found for ${t.second}.")
     } catch (e: Exception) { fail("Compound screening", e) }
 
+    // ---------------- dashboard APIs (used by the dashboard screens) ----------------
+    fun evidenceLevel(p: Paper): String = level(p.types)
+    fun evidenceMix(p: List<Paper>): List<Pair<String, Int>> = p.groupBy { level(it.types) }.map { it.key to it.value.size }.sortedByDescending { it.second }
+    fun admetOf(m: Mol): Pair<Int, List<String>> = admet(m)
+    fun molText(m: Mol): String = molBlock(m)
+    fun dockingPrep(c: Context, drug: String, target: String): Out = docking(c, drug, target)
+    fun asCommand(c: Context, q: String): Out? = command(c, q)
+    fun potency(v: Double): String = nm(v)
+
+    class Gathered(val drug: String, val pq: String, val topic: String, val papers: List<Paper>, val trials: List<Trial>, val label: Label?, val dm: List<DM>,
+                   val mol: Mol?, val mech: List<Mech>, val acts: List<Act>, val srcs: List<Src>) {
+        fun status(date: String) = "SOURCE STATUS (retrieved $date)\n" + srcs.joinToString("\n") { it.line() }
+    }
+
+    /** Fetches every source in parallel and reports each one as it finishes. */
+    fun gather(key: String, q: String, onStatus: (String, String) -> Unit): Gathered {
+        val sPub = Src("PubMed"); val sTri = Src("ClinicalTrials.gov"); val sFda = Src("openFDA label"); val sDm = Src("DailyMed"); val sMol = Src("PubChem"); val sChe = Src("ChEMBL")
+        val (drug, pq, topic) = plan(key, q)
+        val names = listOf(drug, drug.substringBefore(" "), drug.replace(Regex("\\b(hydrochloride|hcl|sodium|potassium|sulfate|sulphate|maleate|mesylate|tartrate|succinate|citrate|phosphate|acetate|besylate|calcium|disodium)\\b", RegexOption.IGNORE_CASE), "").trim())
+        val pool = Executors.newFixedThreadPool(6)
+        return try {
+            val fPub = task(pool, sPub) { pubmedSearch(q, pq, topic, sPub) }
+            val fTri = task(pool, sTri) { trialsFetch(drug, topic, sTri) }
+            val fFda = task(pool, sFda) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else fdaFetch(names, sFda) }
+            val fDm = task(pool, sDm) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else dailymed(drug) }
+            val fMol = task(pool, sMol) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else pubchem(drug) }
+            val fChe = task(pool, sChe) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else { val id = chemblId(drug); Pair(mechanisms(id), activities(id)) } }
+            val papers = fPub.res() ?: emptyList()
+            if (papers.isNotEmpty()) { sPub.ok = true; sPub.note = "${papers.size} papers (" + mix(papers) + ")" } else if (sPub.note.isBlank()) sPub.note = "no matching papers"
+            onStatus(sPub.name, sPub.line())
+            val trials = fTri.res() ?: emptyList()
+            if (trials.isNotEmpty()) { sTri.ok = true; sTri.note = "${trials.size} studies (${trials.count { it.hasResults }} with posted results)" } else if (sTri.note.isBlank()) sTri.note = "no matching studies"
+            onStatus(sTri.name, sTri.line())
+            val label = fFda.res()
+            if (label != null) { sFda.ok = true; sFda.note = "label for ${label.names}, effective ${label.effective}" } else if (sFda.note.isBlank()) sFda.note = "no label matched ${names.firstOrNull { it.isNotBlank() } ?: "the name"}"
+            onStatus(sFda.name, sFda.line())
+            val dm = fDm.res() ?: emptyList()
+            if (dm.isNotEmpty()) { sDm.ok = true; sDm.note = "${dm.size} official label(s) listed" } else if (sDm.note.isBlank()) sDm.note = "no labels listed"
+            onStatus(sDm.name, sDm.line())
+            val mol = fMol.res()
+            if (mol != null) { sMol.ok = true; sMol.note = "CID ${mol.cid}, ${mol.formula}, MW ${f1(mol.mw)}" } else if (sMol.note.isBlank()) sMol.note = "compound not found"
+            onStatus(sMol.name, sMol.line())
+            val che = fChe.res(); val mech = che?.first ?: emptyList(); val acts = che?.second ?: emptyList()
+            if (mech.isNotEmpty() || acts.isNotEmpty()) { sChe.ok = true; sChe.note = "${mech.size} mechanism(s), ${acts.size} potency record(s)" } else if (sChe.note.isBlank()) sChe.note = "no records"
+            onStatus(sChe.name, sChe.line())
+            Gathered(drug, pq, topic, papers, trials, label, dm, mol, mech, acts, listOf(sPub, sTri, sFda, sDm, sMol, sChe))
+        } finally { pool.shutdownNow() }
+    }
+
+    class MolView(val mol: Mol, val score: Int, val admet: List<String>, val png: String?, val sdf: String?, val is3d: Boolean)
+
+    /** Structure viewer data: properties, rule-based ADMET, 2D picture and a 3D conformer when PubChem has one. */
+    fun molecule(c: Context, nameOrSmiles: String, bySmiles: Boolean = false, display: String = nameOrSmiles): MolView {
+        val m = pubchemQuery(if (bySmiles) "smiles" else "name", nameOrSmiles).copy(name = display)
+        val (score, lines) = admet(m)
+        val png = download(c, "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${m.cid}/PNG?image_size=600x600")
+        var sdf: String? = null; var is3 = false
+        try { sdf = get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${m.cid}/SDF?record_type=3d"); is3 = true }
+        catch (e: Exception) { try { sdf = get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${m.cid}/SDF") } catch (e2: Exception) { } }
+        return MolView(m, score, lines, png, sdf, is3)
+    }
+
+    class DrugCard(val name: String, val mol: Mol?, val score: Int, val ro5: String, val mech: String, val target: String, val indication: String,
+                   val trials: String, val papers: String, val labelDate: String, val error: String)
+
+    fun compare(names: List<String>): List<DrugCard> {
+        val pool = Executors.newFixedThreadPool(4)
+        try {
+            val fs = names.take(4).map { n -> pool.submit(Callable<DrugCard> { oneCard(n) }) }
+            return fs.map { try { it.get(100, TimeUnit.SECONDS) } catch (e: Exception) { DrugCard("?", null, 0, "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", e.message ?: "error") } }
+        } finally { pool.shutdownNow() }
+    }
+
+    private fun oneCard(n: String): DrugCard {
+        var mol: Mol? = null; var err = ""
+        try { mol = pubchem(n) } catch (e: Exception) { err = e.message ?: "not found" }
+        val m = mol
+        val (score, lines) = if (m != null) admet(m) else Pair(0, emptyList<String>())
+        val ro5 = lines.firstOrNull()?.substringAfter(": ")?.substringBefore(" ") ?: "n/a"
+        var mech = "n/a"; var target = "n/a"
+        try { val id = chemblId(n); val ms = mechanisms(id); if (ms.isNotEmpty()) { mech = ms[0].action.lowercase() + " of " + ms[0].target; target = ms.joinToString(", ") { it.target }.take(80) } } catch (e: Exception) { }
+        var ind = "n/a"; var ld = "n/a"
+        try { val l = fdaFetch(listOf(n, n.substringBefore(" ")), Src("x")); if (l != null) { ind = Regex("Indications: (.*)").find(l.text)?.groupValues?.get(1)?.take(160) ?: "n/a"; ld = l.effective } } catch (e: Exception) { }
+        var trials = "n/a"; var papers = "n/a"
+        try { trials = JSONObject(get("https://clinicaltrials.gov/api/v2/studies?pageSize=1&countTotal=true&query.intr=" + enc(n))).optInt("totalCount").toString() } catch (e: Exception) { }
+        try { papers = JSONObject(get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=0&term=" + enc("$n[tiab]"))).getJSONObject("esearchresult").optString("count") } catch (e: Exception) { }
+        return DrugCard(n, m, score, ro5, mech, target, ind, trials, papers, ld, err)
+    }
+
+    class TrialStats(val query: String, val total: Int, val sample: Int, val byPhase: List<Pair<String, Int>>, val byStatus: List<Pair<String, Int>>, val byYear: List<Pair<String, Int>>,
+                     val sponsors: List<Pair<String, Int>>, val withResults: Int, val enrollMedian: Long, val enrollTotal: Long, val top: List<Trial>)
+
+    /** Analytics over up to 100 ClinicalTrials.gov studies. mode = term, cond or intr. */
+    fun trialStats(query: String, mode: String): TrialStats {
+        val j = JSONObject(get("https://clinicaltrials.gov/api/v2/studies?pageSize=100&countTotal=true&query.$mode=" + enc(query)))
+        val all = parseTrials(j.optJSONArray("studies") ?: JSONArray())
+        fun count(f: (Trial) -> String) = all.map(f).filter { it.isNotBlank() }.groupBy { it }.map { it.key to it.value.size }.sortedByDescending { it.second }
+        val enr = all.mapNotNull { it.enroll.toLongOrNull() }.sorted()
+        return TrialStats(query, j.optInt("totalCount", all.size), all.size,
+            count { it.phase.ifBlank { "N/A" }.replace("PHASE", "Phase ").replace("/", " / ") }.take(8),
+            count { it.status.lowercase().replace('_', ' ') }.take(8),
+            all.map { Regex("^\\d{4}").find(it.dates)?.value ?: "" }.filter { it.isNotEmpty() }.groupBy { it }.map { it.key to it.value.size }.sortedBy { it.first }.takeLast(15),
+            count { it.sponsor }.take(6), all.count { it.hasResults }, if (enr.isEmpty()) 0L else enr[enr.size / 2], enr.sum(),
+            all.sortedWith(compareByDescending<Trial> { it.hasResults }.thenByDescending { it.phase.contains("PHASE3") || it.phase.contains("PHASE4") }).take(8))
+    }
+
+    class Hit(val id: String, val name: String, val ic50: Double, val smiles: String, val mw: Double?, val logp: Double?, val tpsa: Double?, val ro5: Int, val dl: Int, val score: Int)
+    class Discovery(val targetId: String, val targetName: String, val uniprot: String, val hits: List<Hit>, val pdb: List<Pdb>)
+
+    /** Target to hits: potent ChEMBL compounds ranked by potency and drug-likeness, plus 3D structures for docking. */
+    fun discover(target: String): Discovery {
+        val t = findTarget(target) ?: throw Exception("target '$target' not found in ChEMBL")
+        val a = JSONObject(get("https://www.ebi.ac.uk/chembl/api/data/activity.json?limit=80&standard_type=IC50&standard_units=nM&standard_value__lte=1000&target_chembl_id=${t.first}")).optJSONArray("activities")
+        val best = HashMap<String, Double>()
+        if (a != null) for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i); val v = o.optString("standard_value").toDoubleOrNull() ?: continue; val id = o.optString("molecule_chembl_id")
+            if (id.isNotEmpty() && (best[id] ?: Double.MAX_VALUE) > v) best[id] = v
+        }
+        val top = best.entries.sortedBy { it.value }.take(12)
+        val pool = Executors.newFixedThreadPool(6)
+        val hits = try { top.map { e -> pool.submit(Callable<Hit?> { hit(e.key, e.value) }) }.mapNotNull { try { it.get(60, TimeUnit.SECONDS) } catch (x: Exception) { null } } } finally { pool.shutdownNow() }
+        val pdb = if (t.third.isNotBlank()) try { pdbFor(t.third) } catch (e: Exception) { emptyList() } else emptyList()
+        return Discovery(t.first, t.second, t.third, hits.sortedByDescending { it.score }, pdb)
+    }
+
+    private fun hit(id: String, ic50: Double): Hit? = try {
+        val j = JSONObject(get("https://www.ebi.ac.uk/chembl/api/data/molecule/$id.json"))
+        val p = j.optJSONObject("molecule_properties"); val st = j.optJSONObject("molecule_structures")
+        fun d(k: String): Double? = p?.optString(k)?.toDoubleOrNull()
+        val tpsa = d("psa"); val ro5 = p?.optString("num_ro5_violations")?.toIntOrNull() ?: 0; val rtb = p?.optString("rtb")?.toIntOrNull() ?: 0
+        var dl = 100 - ro5 * 15
+        if (rtb > 10 || (tpsa != null && tpsa > 140)) dl -= 15
+        dl = dl.coerceIn(0, 100)
+        val pot = when { ic50 <= 1 -> 100; ic50 <= 10 -> 90; ic50 <= 100 -> 75; else -> 50 }
+        Hit(id, j.optString("pref_name").let { if (it.isBlank() || it == "null") id else it }, ic50, st?.optString("canonical_smiles") ?: "", d("full_mwt"), d("alogp"), tpsa, ro5, dl, (dl + pot) / 2)
+    } catch (e: Exception) { null }
+
     // ---------------- full research brief ----------------
     private fun plan(key: String, q: String): Triple<String, String, String> {
         val msgs = JSONArray().put(JSONObject().put("role", "user").put("content",
@@ -496,29 +635,9 @@ object Pharma {
 
     fun research(key: String, q: String): Out {
         val date = today()
-        val sPub = Src("PubMed"); val sTri = Src("ClinicalTrials.gov"); val sFda = Src("openFDA label"); val sDm = Src("DailyMed"); val sMol = Src("PubChem"); val sChe = Src("ChEMBL")
-        val (drug, pq, topic) = plan(key, q)
-        val names = listOf(drug, drug.substringBefore(" "), drug.replace(Regex("\\b(hydrochloride|hcl|sodium|potassium|sulfate|sulphate|maleate|mesylate|tartrate|succinate|citrate|phosphate|acetate|besylate|calcium|disodium)\\b", RegexOption.IGNORE_CASE), "").trim())
-        val pool = Executors.newFixedThreadPool(6)
-        class R(val papers: List<Paper>, val trials: List<Trial>, val label: Label?, val dm: List<DM>, val mol: Mol?, val mech: List<Mech>, val acts: List<Act>)
-        val r = try {
-            val fPub = task(pool, sPub) { pubmedSearch(q, pq, topic, sPub) }
-            val fTri = task(pool, sTri) { trialsFetch(drug, topic, sTri) }
-            val fFda = task(pool, sFda) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else fdaFetch(names, sFda) }
-            val fDm = task(pool, sDm) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else dailymed(drug) }
-            val fMol = task(pool, sMol) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else pubchem(drug) }
-            val fChe = task(pool, sChe) { if (drug.isBlank()) throw Exception("no drug name identified in the question") else { val id = chemblId(drug); Pair(mechanisms(id), activities(id)) } }
-            val che = fChe.res()
-            R(fPub.res() ?: emptyList(), fTri.res() ?: emptyList(), fFda.res(), fDm.res() ?: emptyList(), fMol.res(), che?.first ?: emptyList(), che?.second ?: emptyList())
-        } finally { pool.shutdownNow() }
-        val papers = r.papers; val trials = r.trials; val label = r.label; val dm = r.dm; val mol = r.mol; val mech = r.mech; val acts = r.acts
-        if (papers.isNotEmpty()) { sPub.ok = true; sPub.note = "${papers.size} papers (" + mix(papers) + ")" } else if (sPub.note.isBlank()) sPub.note = "no matching papers"
-        if (trials.isNotEmpty()) { sTri.ok = true; sTri.note = "${trials.size} studies (${trials.count { it.hasResults }} with posted results)" } else if (sTri.note.isBlank()) sTri.note = "no matching studies"
-        if (label != null) { sFda.ok = true; sFda.note = "label for ${label.names}, effective ${label.effective}" } else if (sFda.note.isBlank()) sFda.note = "no label matched ${names.firstOrNull { it.isNotBlank() } ?: "the name"}"
-        if (dm.isNotEmpty()) { sDm.ok = true; sDm.note = "${dm.size} official label(s) listed" } else if (sDm.note.isBlank()) sDm.note = "no labels listed"
-        if (mol != null) { sMol.ok = true; sMol.note = "CID ${mol.cid}, ${mol.formula}, MW ${f1(mol.mw)}" } else if (sMol.note.isBlank()) sMol.note = "compound not found"
-        if (mech.isNotEmpty() || acts.isNotEmpty()) { sChe.ok = true; sChe.note = "${mech.size} mechanism(s), ${acts.size} potency record(s)" } else if (sChe.note.isBlank()) sChe.note = "no records"
-        val status = "SOURCE STATUS (retrieved $date)\n" + listOf(sPub, sTri, sFda, sDm, sMol, sChe).joinToString("\n") { it.line() }
+        val g = gather(key, q) { _, _ -> }
+        val drug = g.drug; val pq = g.pq; val papers = g.papers; val trials = g.trials; val label = g.label; val dm = g.dm; val mol = g.mol; val mech = g.mech; val acts = g.acts
+        val status = g.status(date)
         val crossLabel = if (label != null && dm.isNotEmpty()) "\nLabel cross-check: the drug was found in both openFDA and DailyMed." else ""
 
         fun build(absLen: Int, labLen: Int, np: Int): Pair<String, List<Pair<String, String>>> {

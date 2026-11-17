@@ -58,6 +58,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
 
     override fun onBind(i: Intent?): IBinder? = null
     override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
+        if (i?.getBooleanExtra("tts", false) == true && ttsReady) { tts.setPitch(prefs.getFloat("pitch", 0.45f)); tts.setSpeechRate(prefs.getFloat("rate", 0.82f)) }
         if (i?.getBooleanExtra("pause", false) == true) {
             paused = true; wakeEngine?.stop(); main.post { rec?.destroy(); rec = null }
             main.postDelayed({ if (paused) { paused = false; listen() } }, 25000)
@@ -105,7 +106,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         val v = tts.voices?.firstOrNull { it.locale.language == "en" && !it.isNetworkConnectionRequired &&
             Regex("iom|iol|rjs|gbb|tpd|sfg", RegexOption.IGNORE_CASE).containsMatchIn(it.name) }
         if (v != null) tts.voice = v
-        tts.setPitch(0.45f); tts.setSpeechRate(0.82f)
+        tts.setPitch(prefs.getFloat("pitch", 0.45f)); tts.setSpeechRate(prefs.getFloat("rate", 0.82f))
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) { speaking = true; wakeEngine?.stop(); main.post { rec?.cancel() } }
             override fun onDone(id: String?) { speaking = false; ui("idle"); main.postDelayed({ listen() }, 300) }
@@ -120,6 +121,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
 
     private fun say(t: String, log: Boolean = true) {
         ui("speaking", reply = t, log = log)
+        VoiceLog.add("reply", t)
         if (typedMode && !prefs.getBoolean("voice", true)) { main.postDelayed({ ui("idle") }, 400); return }
         tts.speak(t, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
@@ -159,6 +161,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
                 override fun onError(e: Int) {
                     lastCb = System.currentTimeMillis()
                     val benign = e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                    if (!benign) { VoiceLog.errors++; VoiceLog.lastErr = e; VoiceLog.add("error", "mic error code $e") }
                     if (benign) errStreak = 0 else errStreak++
                     when (e) {
                         12, 13 -> defaultLang = true   // language pack unavailable: use the phone's default language
@@ -208,6 +211,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private fun onWakeDetected() {
         val now = System.currentTimeMillis()
         wakeFails = 0; errStreak = 0
+        VoiceLog.wakes++; VoiceLog.add("wake", "Hey Omen detected")
         commandWindowUntil = now + 10000; awaitUntil = now + 12000
         activate()
         say("What can I do for you, sir?", false)
@@ -252,6 +256,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private fun handle(raw: String) {
         typedMode = false
         val t = raw.lowercase().trim()
+        VoiceLog.add("heard", raw)
         if (ringing) {
             if (Regex("answer|pick up|accept").containsMatchIn(t)) { try { getSystemService(TelecomManager::class.java).acceptRingingCall() } catch (e: Exception) { say("I could not answer.") }; return }
             if (Regex("decline|reject|cut|hang up|ignore").containsMatchIn(t)) {
@@ -298,6 +303,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
     private fun generateImage(prompt: String) {
         ChatLog.add(this, false, "Creating your image… this can take up to a minute."); ui("thinking")
         val path = Brain.generateImage(this, prompt)
+        GalleryStore.add(this, path, prompt)
         ChatLog.add(this, false, "\u0001IMG:$path\u0001$prompt")
         say("Your image is ready.", false)
     }
@@ -310,20 +316,21 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         say("Here are images of $q.", false)
     }
 
-    private val pharmaWords = Regex("\\b(drugs?|dose|dosage|dosing|mechanism of action|pharmacokinetics?|pharmacodynamics?|pharmacology|pharmaceutics?|pharmacy|adverse (?:effects?|reactions?|events?)|side effects?|contraindications?|drug interactions?|clinical trials?|therapy|therapeutic|treatment|disease|syndrome|disorder|infections?|cancer|diabetes|hypertension|antibiotics?|antiviral|vaccines?|inhibitors?|agonists?|antagonists?|receptors?|enzymes?|bioavailability|formulations?|excipients?|tablets?|capsules?|fda|cdsco|monograph|pharmacopoeia|toxicity|overdose|metabolism|half-life|clearance|indications?|prescription|analgesics?|nsaids?|steroids?|insulin|[a-z]+(?:mab|nib|pril|sartan|olol|statin|vir|cillin|mycin|azole|dipine|gliptin|gliflozin|prazole|tidine|floxacin|cycline|setron|zepam|barbital))\\b", RegexOption.IGNORE_CASE)
+    private val pharmaWords = Regex("\\b(admet|docking|ligand|smiles|molecular|drugs?|dose|dosage|dosing|mechanism of action|pharmacokinetics?|pharmacodynamics?|pharmacology|pharmaceutics?|pharmacy|adverse (?:effects?|reactions?|events?)|side effects?|contraindications?|drug interactions?|clinical trials?|therapy|therapeutic|treatment|disease|syndrome|disorder|infections?|cancer|diabetes|hypertension|antibiotics?|antiviral|vaccines?|inhibitors?|agonists?|antagonists?|receptors?|enzymes?|bioavailability|formulations?|excipients?|tablets?|capsules?|fda|cdsco|monograph|pharmacopoeia|toxicity|overdose|metabolism|half-life|clearance|indications?|prescription|analgesics?|nsaids?|steroids?|insulin|[a-z]+(?:mab|nib|pril|sartan|olol|statin|vir|cillin|mycin|azole|dipine|gliptin|gliflozin|prazole|tidine|floxacin|cycline|setron|zepam|barbital))\\b", RegexOption.IGNORE_CASE)
     private fun isPharma(t: String) = pharmaWords.containsMatchIn(t)
 
-    /** Full pharmaceutical / medical research brief with references (PubMed, ClinicalTrials.gov, FDA label). */
+    /** Pharmaceutical research: full cited brief, or a molecular tool (structure, ADMET, targets, docking prep, screening). */
     private fun pharmaSearch(q: String) {
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) return say("Give me your Groq key in the settings.")
+        val cmd = Pharma.isCommand(q.trim().lowercase())
         HistoryStore.retag(this, "Pharma research")
-        ChatLog.add(this, false, "Researching the literature (PubMed, ClinicalTrials.gov, FDA)…"); ui("thinking")
-        val r = Brain.pharmaResearch(key, q)
-        val refs = if (r.refs.isEmpty()) "" else "\n\nReferences:\n" + r.refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
-        ChatLog.add(this, false, r.text + refs)
-        val summary = Regex("SUMMARY\\s*(.+?)(?:\\n\\s*\\n|\\n[A-Z ]{6,}\\n)", RegexOption.DOT_MATCHES_ALL).find(r.text)?.groupValues?.get(1)?.trim() ?: r.text.take(400)
-        say(summary.take(450), false)
+        ChatLog.add(this, false, if (cmd) "Running the molecular analysis (PubChem, ChEMBL, RCSB)…" else "Researching the literature (PubMed, ClinicalTrials.gov, openFDA, DailyMed, PubChem, ChEMBL)…"); ui("thinking")
+        val out = Pharma.run(this, key, q)
+        out.image?.let { ChatLog.add(this, false, "\u0001IMG:" + it + "\u0001" + q) }
+        val refs = if (out.refs.isEmpty()) "" else "\n\nREFERENCES (retrieved " + Pharma.today() + ")\n" + out.refs.mapIndexed { i, p -> "${i + 1}. ${p.first}\n${p.second}" }.joinToString("\n")
+        ChatLog.add(this, false, out.text + refs)
+        say(out.speak.ifBlank { out.text.take(300) }, false)
     }
 
     private fun looksLikeQuestion(t: String): Boolean {
@@ -405,6 +412,7 @@ class OmenService : Service(), TextToSpeech.OnInitListener {
         m = Regex("^(?:show|find|get|search|give|display)(?:\\s+me)?(?:\\s+(?:some|a few))?\\s+(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
             ?: Regex("^(?:images?|pictures?|photos?|pics?)\\s+(?:of|for)\\s+(.+)").find(t)
         if (m != null) return imageSearch(m.groupValues[1])
+        if (Pharma.isCommand(t)) return pharmaSearch(c)
         m = Regex("^(?:(?:full|detailed|complete|pharma|pharmaceutical|medical|clinical)\\s+)+(?:research|literature review|review|study|report)\\s+(?:on|about|of|for)?\\s*(.+)").find(t)
             ?: Regex("^(?:research|literature review)\\s+(?:on|about|of|for)?\\s*(.+)").find(t)?.takeIf { isPharma(it.groupValues[1]) }
         if (m != null) return pharmaSearch(m.groupValues[1])

@@ -1,2 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths><cache-path name="camera" path="camera/"/></paths>
+<paths>
+    <cache-path name="camera" path="camera/"/>
+    <files-path name="img" path="img/"/>
+    <files-path name="photos" path="chat_images/"/>
+</paths>
