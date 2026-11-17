@@ -24,7 +24,15 @@ jobs:
         with: { gradle-version: 8.7 }
       - name: Build debug APK
         working-directory: ${{ steps.p.outputs.dir }}
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+      - name: Show the real error
+        if: failure()
+        run: |
+          echo "## Build errors" >> "$GITHUB_STEP_SUMMARY"
+          { grep -E "^e: |What went wrong" -A4 build.log | head -80; } | tee -a "$GITHUB_STEP_SUMMARY" || true
+          grep -E "^e: " build.log | head -20 | while read -r l; do echo "::error::$l"; done || true
       - name: Collect APK
         run: cp "$(find . -name app-debug.apk | head -1)" OMEN.apk
       - uses: actions/upload-artifact@v4
