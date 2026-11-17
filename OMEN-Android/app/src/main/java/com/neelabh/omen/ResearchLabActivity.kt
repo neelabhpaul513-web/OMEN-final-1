@@ -29,7 +29,7 @@ class ResearchLabActivity : Activity() {
     private lateinit var body: LinearLayout
     private lateinit var scroller: ScrollView
     private fun label(s:String, size:Float=15f, color:Int=fg)=TextView(this).apply { text=s; textSize=size; setTextColor(color); setPadding(dp(2),dp(5),dp(2),dp(5)) }
-    private fun field(hintText:String)=EditText(this).apply { hint=hintText; setHintTextColor(muted); setTextColor(fg); textSize=16f; singleLine=true; setPadding(dp(12),dp(12),dp(12),dp(12)); background=round(card) }
+    private fun field(hintText:String)=EditText(this).apply { hint=hintText; setHintTextColor(muted); setTextColor(fg); textSize=16f; setSingleLine(true); setPadding(dp(12),dp(12),dp(12),dp(12)); background=round(card) }
     private fun round(c:Int)=android.graphics.drawable.GradientDrawable().apply { setColor(c); cornerRadius=dp(16).toFloat(); setStroke(dp(1),0x333F465E) }
     private fun button(s:String, action:()->Unit)=Button(this).apply { text=s; isAllCaps=false; setTextColor(fg); background=round(0xFF303448.toInt()); setOnClickListener { action() } }
     private fun section(title:String, subtitle:String, action:()->Unit) {
@@ -87,7 +87,7 @@ class ResearchLabActivity : Activity() {
             result.text="Looking up PubChem…"
             Thread { try {
                 val encoded=URLEncoder.encode(q,"UTF-8"); val json=JSONObject(get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/$encoded/property/MolecularFormula,MolecularWeight,ConnectivitySMILES/JSON"))
-                val p=json.getJSONArray("PropertyTable").getJSONArray("Properties").getJSONObject(0); val cid=p.getInt("CID")
+                val p=json.getJSONObject("PropertyTable").getJSONArray("Properties").getJSONObject(0); val cid=p.getInt("CID")
                 runOnUiThread { result.text="CID: $cid\nFormula: ${p.optString("MolecularFormula")}\nMolecular weight: ${p.optString("MolecularWeight")} g/mol\nCanonical SMILES: ${p.optString("ConnectivitySMILES",p.optString("CanonicalSMILES"))}"; showStructure(cid,q) }
             } catch(e:Exception){runOnUiThread{result.text="No PubChem result or network error: ${e.message}"}} }.start()
         })
