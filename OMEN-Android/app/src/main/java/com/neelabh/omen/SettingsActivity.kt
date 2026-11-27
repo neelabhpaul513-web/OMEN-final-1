@@ -35,13 +35,13 @@ class SettingsActivity : Activity() {
     private fun lp(w: Int, h: Int) = LinearLayout.LayoutParams(w, h)
     private fun card() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8))
-        background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(0xFF1B1B1F.toInt()); setStroke(dp(1), 0x22FFFFFF) }
+        background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(0xB3141420.toInt()); setStroke(dp(1), 0x44A8B8FF) }
     }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         window.statusBarColor = 0xFF0E0E11.toInt(); window.navigationBarColor = 0xFF0E0E11.toInt()
-        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF0E0E11.toInt()) }
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(34), dp(8), dp(10)) }
         bar.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_back); imageTintList = ColorStateList.valueOf(TXT); background = null; setOnClickListener { finish() }
@@ -131,7 +131,7 @@ class SettingsActivity : Activity() {
         header("About")
         val about = card(); body.addView(about)
         note(about, "OMEN · native Android assistant · brain by Groq · offline wake word by Vosk")
-        setContentView(page)
+        setContentView(Ui.withBackground(this, page))
     }
 
     override fun onResume() { super.onResume(); updateWakeInfo(); buildAccess() }

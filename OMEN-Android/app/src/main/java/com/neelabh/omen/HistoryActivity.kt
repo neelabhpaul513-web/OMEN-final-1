@@ -57,7 +57,7 @@ class HistoryActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         window.statusBarColor = 0xFF0E0E11.toInt(); window.navigationBarColor = 0xFF0E0E11.toInt()
-        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF0E0E11.toInt()) }
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(34), dp(14), dp(6)) }
         bar.addView(ImageButton(this).apply { setImageResource(R.drawable.ic_back); imageTintList = ColorStateList.valueOf(TXT); background = null; setOnClickListener { finish() } }, lp(dp(48), dp(48)))
         bar.addView(TextView(this).apply { text = "History"; textSize = 24f; setTextColor(TXT) }, lp(0, WRAP).apply { weight = 1f; marginStart = dp(6) })
@@ -109,7 +109,7 @@ class HistoryActivity : Activity() {
         }
         list.setOnItemClickListener { _, _, pos, _ -> (rows[pos] as? HistoryStore.Entry)?.let { show(it) } }
         page.addView(list, lp(MATCH, 0).apply { weight = 1f })
-        setContentView(page)
+        setContentView(Ui.withBackground(this, page))
         buildChips(); load()
     }
 

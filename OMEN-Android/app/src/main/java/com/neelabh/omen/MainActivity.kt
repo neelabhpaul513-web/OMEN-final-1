@@ -69,11 +69,14 @@ class MainActivity : Activity() {
     private val pendingImages = mutableListOf<File>()
     private val pendingDocs = mutableListOf<Pair<String, String>>()
     private var renderedVersion = -1
+    private var shownCount = 0
+    private lateinit var composer: LinearLayout
     private val prefs by lazy { getSharedPreferences("omen", MODE_PRIVATE) }
 
     private val uiRx = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             view.state = i.getStringExtra("state") ?: view.state
+            glow(view.state)
             status.text = stateLabel()
             i.getStringExtra("heard")?.let { status.text = "HEARD: " + it.take(40).uppercase() }
             render(); refresh()
@@ -135,6 +138,7 @@ class MainActivity : Activity() {
         chipRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         previewBox.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(attachRow) })
         previewBox.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) }, lp(MATCH, WRAP).apply { topMargin = dp(8) })
+        composer = card
         card.addView(previewBox)
 
         input = EditText(this).apply {
@@ -295,6 +299,7 @@ class MainActivity : Activity() {
             Triple(R.drawable.ic_camera, "Camera (search or scan notes)", { launchCamera(false) }),
             Triple(R.drawable.ic_search, "Web search: " + (if (webMode) "ON" else "OFF"), { setWebMode(!webMode) }),
             Triple(R.drawable.ic_flask, "Pharma research: " + (if (pharmaMode) "ON" else "OFF"), { setMode(if (pharmaMode) 0 else 2) }),
+            Triple(R.drawable.ic_dash, "Dashboards", { startActivity(Intent(this, HubActivity::class.java)) }),
             Triple(if (prefs.getBoolean("voice", true)) R.drawable.ic_vol_on else R.drawable.ic_vol_off, "Spoken replies: " + (if (prefs.getBoolean("voice", true)) "ON" else "OFF"),
                 { prefs.edit().putBoolean("voice", !prefs.getBoolean("voice", true)).apply() }),
             Triple(R.drawable.ic_photo, "Create an image", { input.setText("Create an image of "); input.setSelection(input.text.length); input.requestFocus() })
@@ -313,6 +318,12 @@ class MainActivity : Activity() {
         }
         box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         pw.showAsDropDown(anchor, 0, -(anchor.height + box.measuredHeight + dp(10)))
+    }
+
+    /** The chat box glows in the colour of what OMEN is doing. */
+    private fun glow(state: String) {
+        val c = when (state) { "listening" -> 0xCCA8B8FF.toInt(); "thinking" -> 0xCCC79CFF.toInt(); "speaking" -> 0xCCFFFFFF.toInt(); else -> 0x33FFFFFF }
+        composer.background = GradientDrawable().apply { cornerRadius = dp(28).toFloat(); setColor(0xE61B1B1F.toInt()); setStroke(dp(if (state == "idle") 1 else 2), c) }
     }
 
     private fun setWebMode(on: Boolean) = setMode(if (on) 1 else 0)
@@ -622,6 +633,15 @@ class MainActivity : Activity() {
         val items = ChatLog.all(this)
         if (items.isEmpty()) chat.addView(bubble("Say “Hey Omen” from any app once I am awake, or type below. Tap + for photos, files and more.", false))
         items.forEach { chat.addView(bubbleView(it.second, it.first)) }
+        val n = chat.childCount
+        if (shownCount > n) shownCount = 0
+        val from = maxOf(shownCount, n - 3)
+        for (i in from until n) {
+            val v = chat.getChildAt(i)
+            v.alpha = 0f; v.translationY = dp(14).toFloat()
+            v.animate().alpha(1f).translationY(0f).setDuration(240).setStartDelay((i - from) * 60L).start()
+        }
+        shownCount = n
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 

@@ -5,6 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.RadialGradient
+import android.graphics.Shader
+import kotlin.math.cos
+import kotlin.math.sin
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -15,6 +20,11 @@ import android.view.ViewGroup
 import android.widget.*
 
 object Ui {
+    fun withBackground(c: Context, content: View): FrameLayout = FrameLayout(c).apply {
+        addView(NeonBackground(c), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+    fun alpha(color: Int, a: Int): Int = (a shl 24) or (color and 0xFFFFFF)
     val BG = 0xFF0E0E11.toInt()
     val CARD = 0xFF1B1B1F.toInt()
     val ACC = 0xFFA8B8FF.toInt()
@@ -42,18 +52,19 @@ abstract class DashActivity : Activity() {
 
     protected fun build(title: String) {
         window.statusBarColor = Ui.BG; window.navigationBarColor = Ui.BG
-        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Ui.BG) }
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(34), dp(8), dp(8)) }
         bar.addView(ImageButton(this).apply { setImageResource(R.drawable.ic_back); imageTintList = ColorStateList.valueOf(Ui.TXT); background = null; setOnClickListener { finish() } }, lp(dp(48), dp(48)))
         bar.addView(TextView(this).apply { text = title; textSize = 22f; setTextColor(Ui.TXT) }, lp(WRAP, WRAP).apply { marginStart = dp(6) })
         page.addView(bar)
+        page.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Ui.ACC, 0x00A8B8FF)) }, lp(MATCH, dp(2)).apply { marginStart = dp(16); marginEnd = dp(16) })
         body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(4), dp(16), dp(40)) }
         page.addView(ScrollView(this).apply { addView(body) }, lp(MATCH, 0).apply { weight = 1f })
-        setContentView(page)
+        setContentView(Ui.withBackground(this, page))
     }
 
     protected fun card(parent: ViewGroup = body): LinearLayout {
-        val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)); background = Ui.pill(this@DashActivity, Ui.CARD, 0x22FFFFFF, 18) }
+        val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)); background = Ui.pill(this@DashActivity, 0xB3141420.toInt(), 0x44A8B8FF, 18) }
         parent.addView(c, lp(MATCH, WRAP).apply { bottomMargin = dp(12) }); return c
     }
 
@@ -112,5 +123,34 @@ class BarChartView(c: Context, private val rows: List<Pair<String, Int>>, privat
             p.color = color; cv.drawRoundRect(labelW, y + 4 * d, labelW + maxOf(full * r.second / mx, 4 * d), y + 22 * d, 6 * d, 6 * d, p)
             p.color = Ui.MUT; cv.drawText(r.second.toString(), width - valW + 8 * d, y + 17 * d, p)
         }
+    }
+}
+
+/** Slow-moving aurora glow with floating stars, drawn behind every dashboard. */
+class NeonBackground(c: Context) : View(c) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var t = 0f
+    private var last = 0L
+    private val cols = intArrayOf(0xFF5C6BFF.toInt(), 0xFFB05CFF.toInt(), 0xFF2CC9B5.toInt())
+    private val rnd = java.util.Random(11)
+    private val dots = List(40) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.4f + rnd.nextFloat()) }
+
+    override fun onDraw(cv: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat()
+        val now = System.nanoTime(); val dt = if (last == 0L) 0.05f else minOf(0.1f, (now - last) / 1e9f); last = now; t += dt * 0.35f
+        cv.drawColor(0xFF07070C.toInt())
+        for (i in 0 until 3) {
+            val cx = w * (0.5f + 0.4f * sin(t * (0.7f + i * 0.31f) + i * 2.1f))
+            val cy = h * (0.35f + 0.3f * cos(t * (0.5f + i * 0.27f) + i))
+            val r = maxOf(w, h) * (0.55f + 0.1f * i)
+            p.shader = RadialGradient(cx, cy, r, intArrayOf((0x33 shl 24) or (cols[i] and 0xFFFFFF), 0x00000000), null, Shader.TileMode.CLAMP)
+            cv.drawCircle(cx, cy, r, p)
+        }
+        p.shader = null
+        for (d in dots) {
+            p.color = Color.argb((40 + 60 * d[2]).toInt(), 200, 215, 255)
+            cv.drawCircle(d[0] * w, ((d[1] + t * 0.01f * d[2]) % 1f) * h, 1.2f + d[2] * 1.4f, p)
+        }
+        postInvalidateDelayed(50)
     }
 }

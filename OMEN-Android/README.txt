@@ -94,3 +94,9 @@ V15 DASHBOARDS: menu > Dashboards opens a hub with 7 new screens + History + Set
  5 Clinical Trial Analytics: phase, status, year, sponsor charts, enrolment, posted results, notable studies.
  6 Voice Control: status, live log, wake model download, switches, pitch/speed, mic test, command list.
  7 Image Gallery: generated images (with prompts), molecule pictures, photos; create, save, share, delete.
+
+V16 (built from the uploaded OMEN-final-1 project): cooler UI.
+ - Animated aurora background with floating stars behind Dashboards, History and Settings; glass cards; glowing title rule.
+ - Dashboards hub redesigned: pulsing Omen face + colourful gradient tiles with press animation.
+ - Chat: new bubbles slide in; the chat box glows blue when listening, violet when thinking, white when speaking; "Dashboards" added to the + menu.
+ - The extra ResearchLabActivity in the upload was a simplified duplicate of Pharma Research, was not linked anywhere, and is replaced by the full dashboards, so it is not included.
